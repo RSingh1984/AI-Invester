@@ -1,22 +1,20 @@
-# AI Investor V6
+# AI Investor V7
 
-Phone-friendly strategy research laboratory, realistic backtesting and paper trading.
+Phone-friendly Streamlit research, robustness and paper-trading laboratory.
 
-## V6 additions
-- Four independent strategy families: Trend, Momentum, Trend + Momentum, Mean Reversion
-- Proper buy-and-hold benchmark
-- Normalised $10,000 equity curves
-- CAGR, total return, maximum drawdown
-- Win rate, trade count, average win/loss, profit factor
-- Time-in-market measurement
-- Brokerage and slippage assumptions
-- Chronological Training / Validation / Out-of-sample robustness view
-- Research dashboard
-- Paper trader kept separate from research
+## V7 additions
+- Training / Validation / Out-of-sample robustness scorecard
+- Fixed, user-visible research thresholds to reduce hindsight bias
+- OOS CAGR, maximum drawdown, trade count, win rate and profit factor checks
+- Training-to-OOS CAGR stability ratio
+- Cross-asset consistency summary
+- Strategy-by-asset research status: descriptive only, not a forecast or recommendation
+- Training vs Validation vs OOS CAGR comparison
+- Carries forward V6 strategy lab, paper trader, research, portfolio and journal
+- No broker connection and no real-money execution
 
 ## Important
-V6 does not automatically choose a strategy based on historical return. Historical performance can be affected by data quality, survivorship bias, transaction assumptions and parameter selection. Results are not guarantees of future performance.
+Backtests are historical simulations and do not guarantee future returns. The scorecard is an educational research aid. It does not automatically select a strategy for real-money trading.
 
 ## Deploy
-Replace `app.py`, `requirements.txt`, and `README.md` in the existing `RSingh1984/AI-Investor` repository on branch `main`.
-Main Streamlit file: `app.py`.
+Replace `app.py`, `requirements.txt`, and `README.md` in the existing GitHub repository, then let Streamlit Cloud redeploy.

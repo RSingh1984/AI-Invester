@@ -5,7 +5,7 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime
 
-st.set_page_config(page_title="AI Investor V6", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V7", page_icon="📈", layout="wide")
 
 # ---------------- DATA ----------------
 @st.cache_data(ttl=900)
@@ -172,7 +172,7 @@ def run_period(df, start, end, strategy_name, **kwargs):
     return run_strategy(d, strategy_name, **kwargs) if len(d) else None
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V6 Settings")
+st.sidebar.header("⚙️ V7 Settings")
 watch_text = st.sidebar.text_input("Watchlist", "BHP.AX,CBA.AX,CSL.AX,VAS.AX")
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -187,8 +187,12 @@ if "paper_positions" not in st.session_state:
 if "paper_trades" not in st.session_state:
     st.session_state.paper_trades = []
 
+if "v7_robustness" not in st.session_state:
+    st.session_state.v7_robustness = pd.DataFrame()
+
+
 # ---------------- HEADER ----------------
-st.title("📈 AI Investor V6")
+st.title("📈 AI Investor V7")
 st.caption("Strategy research laboratory + realistic historical testing + paper trading")
 st.info("V6 is a research tool. Historical simulations are not forecasts or guarantees. Avoid changing rules repeatedly just to improve a past result.")
 
@@ -199,7 +203,7 @@ with tabs[0]:
     st.subheader("Compare independent strategy families")
     st.write("All entries use next-day open execution. Costs and slippage are included.")
 
-    if st.button("🧪 Run V6 strategy comparison", type="primary"):
+    if st.button("🧪 Run V7 strategy comparison", type="primary"):
         all_rows = []
         benchmark_rows = []
         chart_data = {}
@@ -226,12 +230,12 @@ with tabs[0]:
 
         if all_rows:
             result_df = pd.DataFrame(all_rows)
-            st.session_state.v6_results = result_df
-            st.session_state.v6_bench = pd.DataFrame(benchmark_rows)
-            st.session_state.v6_curves = chart_data
+            st.session_state.v7_results = result_df
+            st.session_state.v7_bench = pd.DataFrame(benchmark_rows)
+            st.session_state.v7_curves = chart_data
 
-    if "v6_results" in st.session_state:
-        df = st.session_state.v6_results.copy()
+    if "v7_results" in st.session_state:
+        df = st.session_state.v7_results.copy()
         display = df.copy()
         display["Final $"] = display["Final $"].round(2)
         for col in ["Return %","CAGR %","Win rate %","Max DD %","Avg win $","Avg loss $","Time in market %"]:
@@ -240,7 +244,7 @@ with tabs[0]:
         st.dataframe(display, use_container_width=True)
 
         st.subheader("Buy & hold benchmark")
-        b = st.session_state.v6_bench.copy()
+        b = st.session_state.v7_bench.copy()
         for col in b.columns[1:]:
             b[col] = b[col].round(2)
         st.dataframe(b, use_container_width=True)
@@ -248,17 +252,33 @@ with tabs[0]:
         st.subheader("Normalised $10,000 equity curves")
         st.caption("Each line starts at $10,000. This makes strategy paths comparable without mixing raw stock prices.")
         for ticker in tickers:
-            names = [c for c in st.session_state.v6_curves if c.startswith(ticker + " — ")]
+            names = [c for c in st.session_state.v7_curves if c.startswith(ticker + " — ")]
             if names:
-                chart = pd.concat([st.session_state.v6_curves[n].rename(n.split(" — ")[1]) for n in names], axis=1).ffill()
+                chart = pd.concat([st.session_state.v7_curves[n].rename(n.split(" — ")[1]) for n in names], axis=1).ffill()
                 st.line_chart(chart)
 
 # ---------------- ROBUSTNESS ----------------
 with tabs[1]:
-    st.subheader("Out-of-sample robustness")
-    st.write("V6 splits the selected history into three chronological sections. Rules are not tuned automatically; the purpose is to see whether behaviour is reasonably consistent across time.")
+    st.subheader("🧠 Robustness scorecard")
+    st.write("V7 keeps the chronological Training → Validation → Out-of-sample split, then adds transparent consistency checks. Nothing is automatically tuned to maximise a historical result.")
 
-    if st.button("🔬 Run robustness test"):
+    st.markdown("""
+**How to read the scorecard**
+- **Training** is the earliest historical slice.
+- **Validation** is the middle slice.
+- **Out-of-sample (OOS)** is the latest held-back slice.
+- V7 reports whether each metric passes simple, predefined research checks. These are **not forecasts** and are not guarantees of future returns.
+""")
+
+    with st.expander("⚙️ V7 research checks", expanded=False):
+        st.write("These thresholds are fixed before looking at the results, to reduce hindsight bias.")
+        c1, c2, c3, c4 = st.columns(4)
+        min_trades = c1.number_input("Minimum OOS trades", 1, 100, 8, 1)
+        min_pf = c2.number_input("Minimum OOS profit factor", 0.1, 5.0, 1.0, 0.1)
+        min_cagr = c3.number_input("Minimum OOS CAGR %", -20.0, 50.0, 0.0, 0.5)
+        max_dd_limit = c4.number_input("Maximum OOS drawdown %", -100.0, 0.0, -25.0, 1.0)
+
+    if st.button("🔬 Run V7 robustness scorecard", type="primary"):
         rows = []
         for ticker in tickers:
             raw = load_history(ticker, f"{years+2}y").sort_index()
@@ -285,10 +305,91 @@ with tabs[1]:
                             "Trades": r["Trades"], "Win rate %": r["Win rate %"],
                             "Profit factor": r["Profit factor"]
                         })
+
         if rows:
             rr = pd.DataFrame(rows)
-            st.dataframe(rr.round(2), use_container_width=True)
-            st.caption("A strategy that only looks good in one historical slice may be fragile. This test is descriptive, not proof of future performance.")
+            st.session_state.v7_robustness = rr
+
+    rr = st.session_state.v7_robustness
+    if not rr.empty:
+        st.subheader("Full robustness results")
+        st.dataframe(rr.round(2), use_container_width=True)
+
+        # Per ticker + strategy scorecard
+        score_rows = []
+        for (ticker, strategy), g in rr.groupby(["Ticker", "Strategy"]):
+            piv = g.set_index("Period")
+            tr = piv.loc["Training"] if "Training" in piv.index else None
+            va = piv.loc["Validation"] if "Validation" in piv.index else None
+            oo = piv.loc["Out-of-sample"] if "Out-of-sample" in piv.index else None
+            if tr is None or va is None or oo is None:
+                continue
+
+            oos_checks = {
+                "OOS CAGR check": oo["CAGR %"] >= min_cagr,
+                "OOS drawdown check": oo["Max DD %"] >= max_dd_limit,
+                "OOS trade-count check": oo["Trades"] >= min_trades,
+                "OOS profit-factor check": (oo["Profit factor"] >= min_pf) if np.isfinite(oo["Profit factor"]) else True,
+            }
+            # Stability is descriptive: how much of training CAGR remains in OOS.
+            if abs(tr["CAGR %"]) > 0.25:
+                stability_ratio = oo["CAGR %"] / tr["CAGR %"]
+            else:
+                stability_ratio = np.nan
+
+            passed = sum(bool(v) for v in oos_checks.values())
+            if passed == 4 and oo["CAGR %"] > 0:
+                status = "Consistent checks"
+            elif passed >= 2:
+                status = "Mixed / investigate"
+            else:
+                status = "Weak OOS checks"
+
+            score_rows.append({
+                "Ticker": ticker, "Strategy": strategy,
+                "Training CAGR %": tr["CAGR %"],
+                "Validation CAGR %": va["CAGR %"],
+                "OOS CAGR %": oo["CAGR %"],
+                "OOS Max DD %": oo["Max DD %"],
+                "OOS Trades": oo["Trades"],
+                "OOS Win rate %": oo["Win rate %"],
+                "OOS Profit factor": oo["Profit factor"],
+                "OOS / Training CAGR": stability_ratio,
+                "Checks passed": f"{passed}/4",
+                "Research status": status
+            })
+
+        score = pd.DataFrame(score_rows)
+        if not score.empty:
+            st.subheader("Strategy-by-asset scorecard")
+            view = score.copy()
+            numeric_cols = [c for c in view.columns if c not in ["Ticker","Strategy","Checks passed","Research status"]]
+            for c in numeric_cols:
+                view[c] = pd.to_numeric(view[c], errors="coerce").round(2)
+            st.dataframe(view, use_container_width=True)
+
+            st.subheader("Cross-asset consistency")
+            agg = score.groupby("Strategy").agg(
+                Assets=("Ticker", "count"),
+                Positive_OOS_CAGR=("OOS CAGR %", lambda x: int((x > 0).sum())),
+                Avg_OOS_CAGR=("OOS CAGR %", "mean"),
+                Median_OOS_CAGR=("OOS CAGR %", "median"),
+                Avg_OOS_Max_DD=("OOS Max DD %", "mean"),
+                Median_OOS_PF=("OOS Profit factor", "median"),
+            ).reset_index()
+            agg["Positive OOS CAGR %"] = 100 * agg["Positive_OOS_CAGR"] / agg["Assets"]
+            st.dataframe(agg.round(2), use_container_width=True)
+
+            st.info("V7 does not automatically select a strategy. A 'Consistent checks' label only means the strategy met the displayed, pre-set research thresholds on the historical OOS slice for that asset. It is not a recommendation or a prediction.")
+
+            st.subheader("Training → Validation → OOS CAGR")
+            chart = score.set_index(["Ticker", "Strategy"])[["Training CAGR %", "Validation CAGR %", "OOS CAGR %"]]
+            st.bar_chart(chart)
+
+            st.subheader("Why this matters")
+            st.write("A large training result followed by weak OOS results is a warning that the historical pattern may not generalise. V7 makes that comparison explicit instead of selecting a strategy from the highest historical return alone.")
+    else:
+        st.info("Run the V7 robustness scorecard to generate the Training, Validation and Out-of-sample comparison.")
 
 # ---------------- PAPER TRADER ----------------
 with tabs[2]:
@@ -349,7 +450,7 @@ with tabs[4]:
 
 # ---------------- LEARN ----------------
 with tabs[5]:
-    st.subheader("V6 concepts")
+    st.subheader("V7 concepts")
     st.markdown("""
 **Trend:** buys when price and moving-average structure indicate an upward trend.
 
@@ -367,7 +468,7 @@ with tabs[5]:
 
 **Profit factor:** gross winning P/L divided by gross losing P/L. It is descriptive and sample-dependent.
 
-**Why V6 does not auto-pick a winner:** choosing whichever historical strategy has the highest past return can create overfitting. The goal is to find rules that are understandable and reasonably stable across assets and time periods.
+**Why V7 does not auto-pick a winner:** choosing whichever historical strategy has the highest past return can create overfitting. V7 instead makes pre-set OOS checks and cross-asset consistency visible. A research status is descriptive, not a forecast.
 """)
 
 # ---------------- JOURNAL ----------------
@@ -379,4 +480,4 @@ with tabs[6]:
         st.info("No paper trades recorded.")
 
 st.divider()
-st.caption("AI Investor V6 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V7 • Educational research and paper trading only • No broker connection • No guaranteed returns")
