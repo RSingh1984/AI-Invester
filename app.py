@@ -18,7 +18,14 @@ def load_history(ticker, period="12y"):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     needed = ["Open", "High", "Low", "Close"]
-    return df.dropna(subset=[c for c in needed if c in df.columns]).sort_index()
+    df = df.dropna(subset=[c for c in needed if c in df.columns]).sort_index()
+    # Normalize timestamps so all tickers use the same naive daily index.
+    idx = pd.to_datetime(df.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_localize(None)
+    df.index = idx.normalize()
+    df = df[~df.index.duplicated(keep="last")]
+    return df
 
 
 def add_indicators(df):
@@ -112,6 +119,30 @@ def buy_hold_curve(data, initial=10000):
     return initial * c / float(c.iloc[0]) if len(c) else pd.Series(dtype=float)
 
 
+
+def safe_row(df, dt):
+    """Return the row for dt without fragile pandas .loc timestamp lookups."""
+    if df.empty:
+        return None
+    idx = df.index
+    try:
+        pos = idx.get_indexer([pd.Timestamp(dt)])[0]
+    except Exception:
+        pos = -1
+    if pos < 0:
+        return None
+    return df.iloc[pos]
+
+
+def safe_close(df, dt, fallback=np.nan):
+    row = safe_row(df, dt)
+    if row is None:
+        return fallback
+    try:
+        return float(row["Close"])
+    except Exception:
+        return fallback
+
 # ---------------- PORTFOLIO BACKTEST ----------------
 def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                   max_exposure_pct=80, stop_atr=2.0, target_r=3.0,
@@ -136,10 +167,8 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
         equity = cash
         for t, p in positions.items():
             d = prepared[t]
-            if dt in d.index:
-                equity += p["shares"] * float(d.loc[dt, "Close"])
-            else:
-                equity += p["shares"] * p["last_price"]
+            px_now = safe_close(d, dt, p["last_price"])
+            equity += p["shares"] * px_now
         curve.append((dt, equity))
         exposure_series.append((dt, 100 * (equity-cash) / equity if equity else 0))
 
@@ -148,7 +177,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
             d = prepared[t]
             if next_dt not in d.index:
                 continue
-            row = d.loc[next_dt]
+            row = safe_row(d, next_dt)
+            if row is None:
+                continue
             p = positions[t]
             low, high, op = float(row["Low"]), float(row["High"]), float(row["Open"])
             exit_px, reason = None, None
@@ -159,7 +190,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
             elif high >= p["target"]:
                 exit_px, reason = p["target"], "Target"
             else:
-                prev = d.loc[dt]
+                prev = safe_row(d, dt)
+                if prev is None:
+                    continue
                 signal, _ = regime_signal(prev)
                 if not signal:
                     exit_px, reason = op, "Regime exit"
@@ -180,7 +213,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
             for t, d in prepared.items():
                 if t in positions or dt not in d.index or next_dt not in d.index:
                     continue
-                row = d.loc[dt]
+                row = safe_row(d, dt)
+                if row is None:
+                    continue
                 signal, strategy = regime_signal(row)
                 if not signal:
                     continue
@@ -192,8 +227,10 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 if len(positions) >= max_positions:
                     break
                 d = prepared[t]
-                row = d.loc[dt]
-                nxt = d.loc[next_dt]
+                row = safe_row(d, dt)
+                nxt = safe_row(d, next_dt)
+                if row is None or nxt is None:
+                    continue
                 px = float(nxt["Open"])
                 atr = float(row["ATR14"])
                 if not np.isfinite(px) or not np.isfinite(atr) or atr <= 0:
@@ -202,7 +239,7 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 risk_per_share = px - stop
                 if risk_per_share <= 0:
                     continue
-                current_equity = cash + sum(p["shares"] * (float(prepared[t2].loc[dt,"Close"]) if dt in prepared[t2].index else p["last_price"]) for t2,p in positions.items())
+                current_equity = cash + sum(p["shares"] * safe_close(prepared[t2], dt, p["last_price"]) for t2, p in positions.items())
                 risk_budget = current_equity * risk_pct / 100
                 qty_risk = int(risk_budget // risk_per_share)
                 max_value = min(current_equity * max_pos_pct/100, current_equity * max_exposure_pct/100 - sum(p["shares"]*p["entry_price"] for p in positions.values()))
@@ -222,8 +259,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 }
 
         for t, p in positions.items():
-            if next_dt in prepared[t].index:
-                p["last_price"] = float(prepared[t].loc[next_dt, "Close"])
+            px_next = safe_close(prepared[t], next_dt, None)
+            if px_next is not None and np.isfinite(px_next):
+                p["last_price"] = px_next
 
     # Close any remaining positions at their final available close.
     for t, p in list(positions.items()):
