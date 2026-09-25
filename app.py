@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.1", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
@@ -166,6 +166,22 @@ def safe_close(df, dt, fallback=np.nan):
         return fallback
 
 
+def prior_two_rows(df, dt):
+    """Return the two most recent trading rows at or before dt, without get_loc failures."""
+    if df.empty:
+        return None, None
+    try:
+        ts = pd.Timestamp(dt)
+        pos = int(df.index.searchsorted(ts, side="right")) - 1
+        if pos < 0:
+            return None, None
+        current = df.iloc[pos]
+        previous = df.iloc[pos - 1] if pos >= 1 else None
+        return current, previous
+    except Exception:
+        return None, None
+
+
 def run_v9(
     data_map,
     initial=10000,
@@ -231,11 +247,12 @@ def run_v9(
             elif high >= p["target"]:
                 exit_px, reason = p["target"], "Target"
             elif held >= min_hold_days:
-                prev_row = safe_row(d, dt)
-                prev_prev = safe_row(d, d.index[max(0, d.index.get_loc(dt) - 1)])
+                prev_row, prev_prev = prior_two_rows(d, dt)
                 confirmed_break = (
                     prev_row is not None
                     and prev_prev is not None
+                    and pd.notna(prev_row.get("SMA50"))
+                    and pd.notna(prev_prev.get("SMA50"))
                     and float(prev_row["Close"]) < float(prev_row["SMA50"])
                     and float(prev_prev["Close"]) < float(prev_prev["SMA50"])
                 )
@@ -412,7 +429,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9 Settings")
+st.sidebar.header("⚙️ V9.1 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -435,7 +452,7 @@ if "v9_data" not in st.session_state:
 if "v9_diag" not in st.session_state:
     st.session_state.v9_diag = None
 
-st.title("📈 AI Investor V9")
+st.title("📈 AI Investor V9.1")
 st.caption("Confirmed-entry + lower-turnover + risk-controlled paper-trading research laboratory")
 st.info(
     "V9 is an educational research and paper-trading system. It does not guarantee returns, "
@@ -457,7 +474,7 @@ with tabs[0]:
         "total exposure. Signals are calculated on one day's close and executed at the next day's open."
     )
 
-    if st.button("🚀 Run V9 portfolio backtest", type="primary"):
+    if st.button("🚀 Run V9.1 portfolio backtest", type="primary"):
         data_map = build_data(tickers, years)
         st.session_state.v9_data = data_map
         st.session_state.v9_result = run_v9(
@@ -811,4 +828,4 @@ Backtests are historical simulations. They cannot establish future returns, and 
 """)
 
 st.divider()
-st.caption("AI Investor V9 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V9.1 • Educational research and paper trading only • No broker connection • No guaranteed returns")
