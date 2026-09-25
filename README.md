@@ -1,26 +1,25 @@
-# AI Investor V3
+# AI Investor V4
 
-Phone-friendly Streamlit paper-trading laboratory.
+Phone-friendly Streamlit research, backtesting and paper-trading laboratory.
 
-### V3 features
-- Carries forward the current V2 paper positions: 16 BHP.AX @ $60.72 and 5 CSL.AX @ $176.95
-- Trend, momentum, RSI and volatility scoring
-- Rule-based signal strength
-- Automatic paper BUY/SELL
-- Profit target and stop-loss
-- Position sizing and dollar risk budget
-- Research dashboard
-- Portfolio dashboard
-- Learning explanations
-- Trade journal
-- Reset paper account
+## V4 additions
+- Historical backtesting of the current rule set
+- Strategy return, trade count, win rate, average win/loss and maximum drawdown
+- Equity curves
+- Technical research: SMA20/SMA50/SMA200, RSI, momentum and volatility
+- Fundamental snapshot when provider data is available
+- Automatic paper BUY/SELL with profit target and stop-loss
+- Position sizing and planned dollar risk
+- Research explanations
+- Portfolio and trade journal
+- No broker connection and no real-money execution
 
-### Important
-This is an educational paper-trading experiment. It does not guarantee profits and does not connect to a broker.
+## Important
+Backtests are historical simulations and do not guarantee future results. V4 is educational research software, not a guaranteed-profit system.
 
-### Streamlit Community Cloud
+## Deploy
+Replace `app.py` and `requirements.txt` in the existing GitHub repository:
+
 Repository: `RSingh1984/AI-Investor`
 Branch: `main`
 Main file: `app.py`
-
-Replace the existing `app.py` and `requirements.txt` with the V3 files.
