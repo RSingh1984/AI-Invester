@@ -1,25 +1,25 @@
-# AI Investor V4
+# AI Investor V5
 
-Phone-friendly Streamlit research, backtesting and paper-trading laboratory.
+Phone-friendly realistic backtesting and paper-trading laboratory.
 
-## V4 additions
-- Historical backtesting of the current rule set
-- Strategy return, trade count, win rate, average win/loss and maximum drawdown
-- Equity curves
-- Technical research: SMA20/SMA50/SMA200, RSI, momentum and volatility
-- Fundamental snapshot when provider data is available
-- Automatic paper BUY/SELL with profit target and stop-loss
-- Position sizing and planned dollar risk
-- Research explanations
-- Portfolio and trade journal
-- No broker connection and no real-money execution
+## V5 improvements
+- Signal calculated at the end of one trading day
+- Entry simulated at the next trading day's open
+- Target/stop tested against next-day OHLC
+- Conservative handling when both target and stop are touched
+- Brokerage and slippage assumptions
+- CAGR and maximum drawdown
+- Win rate, trade count, average win/loss and profit factor
+- Strategy vs buy-and-hold comparison
+- Side-by-side equity curves
+- Paper trader, research dashboard, portfolio and journal
 
 ## Important
-Backtests are historical simulations and do not guarantee future results. V4 is educational research software, not a guaranteed-profit system.
+Backtests are historical simulations. They do not guarantee future returns. The software is educational and has no broker connection.
 
 ## Deploy
-Replace `app.py` and `requirements.txt` in the existing GitHub repository:
+Replace `app.py` and `requirements.txt` in:
+`RSingh1984/AI-Investor`
 
-Repository: `RSingh1984/AI-Investor`
 Branch: `main`
 Main file: `app.py`
