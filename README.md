@@ -1,25 +1,22 @@
-# AI Investor V5
+# AI Investor V6
 
-Phone-friendly realistic backtesting and paper-trading laboratory.
+Phone-friendly strategy research laboratory, realistic backtesting and paper trading.
 
-## V5 improvements
-- Signal calculated at the end of one trading day
-- Entry simulated at the next trading day's open
-- Target/stop tested against next-day OHLC
-- Conservative handling when both target and stop are touched
+## V6 additions
+- Four independent strategy families: Trend, Momentum, Trend + Momentum, Mean Reversion
+- Proper buy-and-hold benchmark
+- Normalised $10,000 equity curves
+- CAGR, total return, maximum drawdown
+- Win rate, trade count, average win/loss, profit factor
+- Time-in-market measurement
 - Brokerage and slippage assumptions
-- CAGR and maximum drawdown
-- Win rate, trade count, average win/loss and profit factor
-- Strategy vs buy-and-hold comparison
-- Side-by-side equity curves
-- Paper trader, research dashboard, portfolio and journal
+- Chronological Training / Validation / Out-of-sample robustness view
+- Research dashboard
+- Paper trader kept separate from research
 
 ## Important
-Backtests are historical simulations. They do not guarantee future returns. The software is educational and has no broker connection.
+V6 does not automatically choose a strategy based on historical return. Historical performance can be affected by data quality, survivorship bias, transaction assumptions and parameter selection. Results are not guarantees of future performance.
 
 ## Deploy
-Replace `app.py` and `requirements.txt` in:
-`RSingh1984/AI-Investor`
-
-Branch: `main`
-Main file: `app.py`
+Replace `app.py`, `requirements.txt`, and `README.md` in the existing `RSingh1984/AI-Investor` repository on branch `main`.
+Main Streamlit file: `app.py`.
