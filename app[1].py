@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9.1", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.2", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
@@ -196,6 +196,8 @@ def run_v9(
     min_hold_days=5,
     cooldown_days=10,
     max_hold_days=90,
+    eval_start=None,
+    eval_end=None,
 ):
     prepared = {t: add_indicators(df) for t, df in data_map.items() if not df.empty}
     prepared = {t: d for t, d in prepared.items() if len(d) >= 260}
@@ -221,75 +223,78 @@ def run_v9(
             px = safe_close(prepared[t], dt, p["last_price"])
             equity += p["shares"] * px
             invested += p["shares"] * px
-        curve_points.append((dt, equity))
-        exposure_points.append((dt, 100 * invested / equity if equity else 0))
+        if (eval_start is None or dt >= pd.Timestamp(eval_start)) and (eval_end is None or dt <= pd.Timestamp(eval_end)):
+            curve_points.append((dt, equity))
+            exposure_points.append((dt, 100 * invested / equity if equity else 0))
 
         # -------- exits --------
-        for t in list(positions.keys()):
-            d = prepared[t]
-            row_next = safe_row(d, next_dt)
-            if row_next is None:
-                continue
+        if (eval_start is None or dt >= pd.Timestamp(eval_start)) and (eval_end is None or next_dt <= pd.Timestamp(eval_end)):
+            for t in list(positions.keys()):
+                d = prepared[t]
+                row_next = safe_row(d, next_dt)
+                if row_next is None:
+                    continue
 
-            p = positions[t]
-            low = float(row_next["Low"])
-            high = float(row_next["High"])
-            held = i - p["entry_index"] + 1
+                p = positions[t]
+                low = float(row_next["Low"])
+                high = float(row_next["High"])
+                held = i - p["entry_index"] + 1
 
-            exit_px = None
-            reason = None
+                exit_px = None
+                reason = None
 
-            # Conservative same-day collision rule: stop first.
-            if low <= p["stop"] and high >= p["target"]:
-                exit_px, reason = p["stop"], "Stop (both touched)"
-            elif low <= p["stop"]:
-                exit_px, reason = p["stop"], "Stop"
-            elif high >= p["target"]:
-                exit_px, reason = p["target"], "Target"
-            elif held >= min_hold_days:
-                prev_row, prev_prev = prior_two_rows(d, dt)
-                confirmed_break = (
-                    prev_row is not None
-                    and prev_prev is not None
-                    and pd.notna(prev_row.get("SMA50"))
-                    and pd.notna(prev_prev.get("SMA50"))
-                    and float(prev_row["Close"]) < float(prev_row["SMA50"])
-                    and float(prev_prev["Close"]) < float(prev_prev["SMA50"])
-                )
-                if confirmed_break:
-                    exit_px, reason = float(row_next["Open"]), "Confirmed trend break"
-                elif held >= max_hold_days:
-                    exit_px, reason = float(row_next["Open"]), "Max hold"
+                # Conservative same-day collision rule: stop first.
+                if low <= p["stop"] and high >= p["target"]:
+                    exit_px, reason = p["stop"], "Stop (both touched)"
+                elif low <= p["stop"]:
+                    exit_px, reason = p["stop"], "Stop"
+                elif high >= p["target"]:
+                    exit_px, reason = p["target"], "Target"
+                elif held >= min_hold_days:
+                    prev_row, prev_prev = prior_two_rows(d, dt)
+                    confirmed_break = (
+                        prev_row is not None
+                        and prev_prev is not None
+                        and pd.notna(prev_row.get("SMA50"))
+                        and pd.notna(prev_prev.get("SMA50"))
+                        and float(prev_row["Close"]) < float(prev_row["SMA50"])
+                        and float(prev_prev["Close"]) < float(prev_prev["SMA50"])
+                    )
+                    if confirmed_break:
+                        exit_px, reason = float(row_next["Open"]), "Confirmed trend break"
+                    elif held >= max_hold_days:
+                        exit_px, reason = float(row_next["Open"]), "Max hold"
 
-            if exit_px is not None:
-                gross = p["shares"] * exit_px
-                sell_cost = brokerage + gross * slippage_pct / 100
-                buy_cost = brokerage + p["entry_value"] * slippage_pct / 100
-                cash += gross - sell_cost
-                pnl = (gross - sell_cost) - (p["entry_value"] + buy_cost)
+                if exit_px is not None:
+                    gross = p["shares"] * exit_px
+                    sell_cost = brokerage + gross * slippage_pct / 100
+                    buy_cost = brokerage + p["entry_value"] * slippage_pct / 100
+                    cash += gross - sell_cost
+                    pnl = (gross - sell_cost) - (p["entry_value"] + buy_cost)
 
-                trades.append({
-                    "Ticker": t,
-                    "Entry date": p["entry_date"],
-                    "Exit date": next_dt,
-                    "Entry": p["entry_price"],
-                    "Exit": exit_px,
-                    "Shares": p["shares"],
-                    "P/L": pnl,
-                    "Reason": reason,
-                    "Entry score": p["score"],
-                    "Entry regime": p["entry_regime"],
-                    "Entry value": p["entry_value"],
-                    "Brokerage total": 2 * brokerage,
-                    "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
-                    "Hold days": held,
-                })
-                del positions[t]
-                last_exit_idx[t] = i + 1
+                    trades.append({
+                        "Ticker": t,
+                        "Entry date": p["entry_date"],
+                        "Exit date": next_dt,
+                        "Entry": p["entry_price"],
+                        "Exit": exit_px,
+                        "Shares": p["shares"],
+                        "P/L": pnl,
+                        "Reason": reason,
+                        "Entry score": p["score"],
+                        "Entry regime": p["entry_regime"],
+                        "Entry value": p["entry_value"],
+                        "Brokerage total": 2 * brokerage,
+                        "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
+                        "Hold days": held,
+                    })
+                    del positions[t]
+                    last_exit_idx[t] = i + 1
 
         # -------- entries --------
         slots = max_positions - len(positions)
-        if slots > 0:
+        entries_allowed = (eval_start is None or dt >= pd.Timestamp(eval_start)) and (eval_end is None or next_dt <= pd.Timestamp(eval_end))
+        if slots > 0 and entries_allowed:
             candidates = []
             for t, d in prepared.items():
                 if t in positions or dt not in d.index or next_dt not in d.index:
@@ -371,10 +376,14 @@ def run_v9(
             if np.isfinite(px):
                 p["last_price"] = px
 
-    # End-of-test close.
+    # End-of-evaluation close.
     for t, p in list(positions.items()):
         d = prepared[t]
-        last_dt = d.index[-1]
+        cutoff = pd.Timestamp(eval_end) if eval_end is not None else d.index[-1]
+        eligible = d.index[d.index <= cutoff]
+        if len(eligible) == 0:
+            continue
+        last_dt = eligible[-1]
         px = float(d["Close"].iloc[-1])
         gross = p["shares"] * px
         sell_cost = brokerage + gross * slippage_pct / 100
@@ -403,7 +412,13 @@ def run_v9(
     if not curve_points:
         return None
 
-    curve_points.append((max(d.index[-1] for d in prepared.values()), cash))
+    final_curve_dates = [d.index[d.index <= pd.Timestamp(eval_end)][-1] for d in prepared.values() if eval_end is not None and len(d.index[d.index <= pd.Timestamp(eval_end)]) > 0]
+    if eval_end is None:
+        final_dt = max(d.index[-1] for d in prepared.values())
+    else:
+        final_dt = max(final_curve_dates) if final_curve_dates else None
+    if final_dt is not None:
+        curve_points.append((final_dt, cash))
     curve = pd.Series({pd.Timestamp(k): v for k, v in curve_points}).sort_index()
     curve = curve[~curve.index.duplicated(keep="last")]
     curve = curve.reindex(pd.date_range(curve.index.min(), curve.index.max(), freq="B")).ffill()
@@ -429,7 +444,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9.1 Settings")
+st.sidebar.header("⚙️ V9.2 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -452,7 +467,7 @@ if "v9_data" not in st.session_state:
 if "v9_diag" not in st.session_state:
     st.session_state.v9_diag = None
 
-st.title("📈 AI Investor V9.1")
+st.title("📈 AI Investor V9.2")
 st.caption("Confirmed-entry + lower-turnover + risk-controlled paper-trading research laboratory")
 st.info(
     "V9 is an educational research and paper-trading system. It does not guarantee returns, "
@@ -467,14 +482,14 @@ tabs = st.tabs([
 
 # ---------------- PORTFOLIO LAB ----------------
 with tabs[0]:
-    st.subheader("V9 confirmed-entry portfolio engine")
+    st.subheader("V9.2 confirmed-entry portfolio engine")
     st.write(
         "V9 addresses the V8.1 diagnostic findings by requiring several current-market confirmations, "
         "removing routine regime exits, adding a minimum hold, adding a post-exit cooldown, and limiting "
         "total exposure. Signals are calculated on one day's close and executed at the next day's open."
     )
 
-    if st.button("🚀 Run V9.1 portfolio backtest", type="primary"):
+    if st.button("🚀 Run V9.2 portfolio backtest", type="primary"):
         data_map = build_data(tickers, years)
         st.session_state.v9_data = data_map
         st.session_state.v9_result = run_v9(
@@ -540,13 +555,14 @@ with tabs[1]:
             a = int(n * 0.55)
             b = int(n * 0.775)
             parts = [
-                ("Training", raw.iloc[:a].copy()),
-                ("Validation", raw.iloc[a:b].copy()),
-                ("Out-of-sample", raw.iloc[b:].copy()),
+                ("Training", raw.index[0], raw.index[a - 1]),
+                ("Validation", raw.index[a], raw.index[b - 1]),
+                ("Out-of-sample", raw.index[b], raw.index[-1]),
             ]
-            for name, part in parts:
+            for name, period_start, period_end in parts:
+                # Use the full history for indicator warm-up, but evaluate only inside this period.
                 res = run_v9(
-                    {ticker: part},
+                    {ticker: raw},
                     initial=10000,
                     risk_pct=risk_pct,
                     max_pos_pct=max_pos_pct,
@@ -559,6 +575,8 @@ with tabs[1]:
                     min_hold_days=min_hold_days,
                     cooldown_days=cooldown_days,
                     max_hold_days=max_hold_days,
+                    eval_start=period_start,
+                    eval_end=period_end,
                 )
                 if res:
                     rows.append({
@@ -828,4 +846,4 @@ Backtests are historical simulations. They cannot establish future returns, and 
 """)
 
 st.divider()
-st.caption("AI Investor V9.1 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V9.2 • Educational research and paper trading only • No broker connection • No guaranteed returns")
