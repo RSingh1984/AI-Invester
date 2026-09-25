@@ -1,19 +1,26 @@
-# AI Investor V2 — Phone-Friendly Paper Trading Prototype
+# AI Investor V3
 
-V2 adds:
-- Automatic paper BUY candidates from a simple rules engine
-- Automatic paper SELL when profit target or stop-loss is reached
-- Position sizing
-- Portfolio tracking
-- Trade journal
+Phone-friendly Streamlit paper-trading laboratory.
+
+### V3 features
+- Carries forward the current V2 paper positions: 16 BHP.AX @ $60.72 and 5 CSL.AX @ $176.95
+- Trend, momentum, RSI and volatility scoring
+- Rule-based signal strength
+- Automatic paper BUY/SELL
+- Profit target and stop-loss
+- Position sizing and dollar risk budget
 - Research dashboard
+- Portfolio dashboard
 - Learning explanations
+- Trade journal
+- Reset paper account
 
-## Run
-pip install -r requirements.txt
-streamlit run app.py
+### Important
+This is an educational paper-trading experiment. It does not guarantee profits and does not connect to a broker.
 
-For phone use, host the app on a service that provides a public HTTPS URL, then open that URL in Chrome on Android.
+### Streamlit Community Cloud
+Repository: `RSingh1984/AI-Investor`
+Branch: `main`
+Main file: `app.py`
 
-## Important
-This version does NOT place real trades. It is a research/education prototype. The rules are deliberately simple and should be evaluated with substantial paper-trading data before considering any real-money integration.
+Replace the existing `app.py` and `requirements.txt` with the V3 files.
