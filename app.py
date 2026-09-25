@@ -4,7 +4,7 @@ import numpy as np
 import yfinance as yf
 from dataclasses import dataclass
 
-st.set_page_config(page_title="AI Investor V8", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V8.1", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 STRATEGIES = ["Trend", "Momentum", "Trend + Momentum", "Mean Reversion"]
@@ -146,7 +146,8 @@ def safe_close(df, dt, fallback=np.nan):
 # ---------------- PORTFOLIO BACKTEST ----------------
 def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                   max_exposure_pct=80, stop_atr=2.0, target_r=3.0,
-                  brokerage=6.50, slippage_pct=0.10, max_positions=3):
+                  brokerage=6.50, slippage_pct=0.10, max_positions=3,
+                  regime_exit=True):
     prepared = {t: add_indicators(df) for t, df in data_map.items() if not df.empty}
     prepared = {t: d for t, d in prepared.items() if len(d) >= 260}
     if not prepared:
@@ -194,7 +195,7 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 if prev is None:
                     continue
                 signal, _ = regime_signal(prev)
-                if not signal:
+                if regime_exit and not signal:
                     exit_px, reason = op, "Regime exit"
             if exit_px is not None:
                 gross = p["shares"] * exit_px
@@ -204,7 +205,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 pnl = (gross - sell_cost) - (p["entry_value"] + buy_cost)
                 trades.append({"Ticker": t, "Entry date": p["entry_date"], "Exit date": next_dt,
                                "Entry": p["entry_price"], "Exit": exit_px, "Shares": p["shares"],
-                               "P/L": pnl, "Reason": reason, "Strategy": p["strategy"]})
+                               "P/L": pnl, "Reason": reason, "Strategy": p["strategy"], "Entry regime": p.get("entry_regime", "Unknown"),
+                               "Entry value": p["entry_value"], "Brokerage total": 2*brokerage,
+                               "Slippage total": p["entry_value"]*slippage_pct/100 + gross*slippage_pct/100})
                 del positions[t]
 
         # New entries based on today's close, executed at next day's open.
@@ -255,7 +258,7 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
                 positions[t] = {
                     "shares": qty, "entry_price": px, "entry_value": value,
                     "entry_date": next_dt, "stop": stop, "target": px + target_r * risk_per_share,
-                    "strategy": strategy, "last_price": px
+                    "strategy": strategy, "entry_regime": classify_regime(row), "last_price": px
                 }
 
         for t, p in positions.items():
@@ -275,7 +278,9 @@ def run_portfolio(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25,
         pnl = (gross - sell_cost) - (p["entry_value"] + buy_cost)
         trades.append({"Ticker": t, "Entry date": p["entry_date"], "Exit date": last_dt,
                        "Entry": p["entry_price"], "Exit": px, "Shares": p["shares"],
-                       "P/L": pnl, "Reason": "End of test", "Strategy": p["strategy"]})
+                       "P/L": pnl, "Reason": "End of test", "Strategy": p["strategy"], "Entry regime": p.get("entry_regime", "Unknown"),
+                       "Entry value": p["entry_value"], "Brokerage total": 2*brokerage,
+                       "Slippage total": p["entry_value"]*slippage_pct/100 + gross*slippage_pct/100})
         del positions[t]
 
     if not curve:
@@ -301,7 +306,7 @@ def split_data(data_map, fractions=(0.55, 0.225, 0.225)):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V8 Settings")
+st.sidebar.header("⚙️ V8.1 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -318,17 +323,23 @@ if "v8_portfolio" not in st.session_state:
     st.session_state.v8_portfolio = None
 if "v8_strategy" not in st.session_state:
     st.session_state.v8_strategy = pd.DataFrame()
+if "v81_diagnostics" not in st.session_state:
+    st.session_state.v81_diagnostics = None
+if "v81_cost_compare" not in st.session_state:
+    st.session_state.v81_cost_compare = None
+if "v81_hold_compare" not in st.session_state:
+    st.session_state.v81_hold_compare = None
 
-st.title("📈 AI Investor V8")
-st.caption("Portfolio regime engine + risk-based backtesting + paper-trading laboratory")
-st.info("V8 is an educational research and paper-trading tool. It does not guarantee returns and has no broker connection.")
+st.title("📈 AI Investor V8.1")
+st.caption("Portfolio regime engine + diagnostic research + risk-based backtesting + paper-trading laboratory")
+st.info("V8.1 is an educational research and paper-trading tool. It does not guarantee returns and has no broker connection. This version adds diagnostics rather than historical parameter tuning.")
 
-tabs = st.tabs(["🏦 Portfolio Lab", "🔬 Robustness", "🤖 Paper Trader", "📊 Research", "💼 Portfolio", "📚 Learn"])
+tabs = st.tabs(["🏦 Portfolio Lab", "🔬 Robustness", "🧪 Diagnostics", "🤖 Paper Trader", "📊 Research", "💼 Portfolio", "📚 Learn"])
 
 # ---------------- PORTFOLIO LAB ----------------
 with tabs[0]:
-    st.subheader("V8 portfolio regime engine")
-    st.write("The engine first classifies each asset as Bull trend, Range / transition, or Bear trend. It then uses a fixed strategy rule and sizes positions from stop distance and portfolio risk.")
+    st.subheader("V8.1 portfolio regime engine")
+    st.write("The engine first classifies each asset as Bull trend, Range / transition, or Bear trend. It then uses a fixed strategy rule and sizes positions from stop distance and portfolio risk. V8.1 adds transparent diagnostics without tuning parameters to the historical result.")
     if st.button("🚀 Run V8 portfolio backtest", type="primary"):
         data_map = {}
         for ticker in tickers:
@@ -336,6 +347,7 @@ with tabs[0]:
             if not raw.empty:
                 data_map[ticker] = raw.tail(int(years*252 + 260))
         if data_map:
+            st.session_state.v81_data_map = data_map
             result = run_portfolio(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
                                    max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
                                    brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions)
@@ -417,9 +429,107 @@ with tabs[1]:
             st.dataframe(oos.round(2),use_container_width=True)
             st.info("OOS is a historical held-back slice, not a forecast. A positive OOS result does not establish future profitability.")
 
-# ---------------- PAPER TRADER ----------------
+# ---------------- DIAGNOSTICS ----------------
 with tabs[2]:
-    st.subheader("🤖 V8 paper trader")
+    st.subheader("🧪 V8.1 diagnostic laboratory")
+    st.write("This tab separates possible causes of poor results. It does not search for the best historical parameters.")
+    st.info("Important: the current V8 regime engine already blocks new entries during Bear trend. The diagnostics therefore test whether regime exits and trading costs are contributing to the losses, and show P/L by stock, strategy and entry regime.")
+    if st.button("🧪 Run V8.1 diagnostics", type="primary"):
+        data_map = st.session_state.get("v81_data_map")
+        if not data_map:
+            data_map = {}
+            for ticker in tickers:
+                raw = load_history(ticker, f"{years+2}y")
+                if not raw.empty:
+                    data_map[ticker] = raw.tail(int(years*252 + 260))
+        if data_map:
+            st.session_state.v81_data_map = data_map
+            base = run_portfolio(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
+                                 max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
+                                 brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions,
+                                 regime_exit=True)
+            zero_cost = run_portfolio(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
+                                      max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
+                                      brokerage=0.0, slippage_pct=0.0, max_positions=max_positions,
+                                      regime_exit=True)
+            no_regime_exit = run_portfolio(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
+                                           max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
+                                           brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions,
+                                           regime_exit=False)
+            st.session_state.v81_diagnostics = base
+            st.session_state.v81_cost_compare = zero_cost
+            st.session_state.v81_hold_compare = no_regime_exit
+
+    if st.session_state.v81_diagnostics:
+        base = st.session_state.v81_diagnostics
+        zc = st.session_state.v81_cost_compare
+        nr = st.session_state.v81_hold_compare
+        st.markdown("### 1. Current V8 baseline")
+        c = st.columns(5)
+        c[0].metric("Final", f"${base['Final $']:,.2f}")
+        c[1].metric("CAGR", f"{base['CAGR %']:+.2f}%")
+        c[2].metric("Max DD", f"{base['Max DD %']:.2f}%")
+        c[3].metric("Win rate", f"{base['Win rate %']:.1f}%")
+        c[4].metric("Profit factor", "∞" if np.isinf(base['Profit factor']) else f"{base['Profit factor']:.2f}")
+
+        st.markdown("### 2. Cost sensitivity — same rules, costs removed")
+        cost_df = pd.DataFrame([
+            {"Test":"Current costs", "Final $":base["Final $"], "Return %":base["Return %"], "CAGR %":base["CAGR %"], "Max DD %":base["Max DD %"], "Trades":base["Trades"], "Profit factor":base["Profit factor"]},
+            {"Test":"Zero brokerage + zero slippage", "Final $":zc["Final $"], "Return %":zc["Return %"], "CAGR %":zc["CAGR %"], "Max DD %":zc["Max DD %"], "Trades":zc["Trades"], "Profit factor":zc["Profit factor"]},
+        ])
+        st.dataframe(cost_df.round(2), use_container_width=True)
+        st.caption("This is not an optimisation. It simply estimates how much of the historical result is associated with the stated transaction-cost assumptions.")
+
+        st.markdown("### 3. Regime-exit sensitivity")
+        exit_df = pd.DataFrame([
+            {"Test":"Normal V8 regime exits", "Final $":base["Final $"], "Return %":base["Return %"], "CAGR %":base["CAGR %"], "Max DD %":base["Max DD %"], "Trades":base["Trades"], "Profit factor":base["Profit factor"]},
+            {"Test":"Stops/targets only (no regime exits)", "Final $":nr["Final $"], "Return %":nr["Return %"], "CAGR %":nr["CAGR %"], "Max DD %":nr["Max DD %"], "Trades":nr["Trades"], "Profit factor":nr["Profit factor"]},
+        ])
+        st.dataframe(exit_df.round(2), use_container_width=True)
+        st.caption("If this changes the result materially, regime exits deserve further investigation. It is not evidence that removing them is better; it is a diagnostic comparison.")
+
+        trades = base.get("trades_df", pd.DataFrame()).copy()
+        if not trades.empty:
+            st.markdown("### 4. P/L by stock")
+            by_stock = trades.groupby("Ticker").agg(
+                Trades=("P/L","count"), Gross_PnL=("P/L","sum"), Avg_PnL=("P/L","mean"),
+                Win_rate=("P/L", lambda s: 100*(s>0).mean()),
+                Total_brokerage=("Brokerage total","sum"), Total_slippage=("Slippage total","sum")
+            ).reset_index()
+            st.dataframe(by_stock.round(2), use_container_width=True)
+
+            st.markdown("### 5. P/L by selected strategy")
+            by_strategy = trades.groupby("Strategy").agg(
+                Trades=("P/L","count"), Gross_PnL=("P/L","sum"), Avg_PnL=("P/L","mean"),
+                Win_rate=("P/L", lambda s: 100*(s>0).mean())
+            ).reset_index()
+            st.dataframe(by_strategy.round(2), use_container_width=True)
+
+            st.markdown("### 6. P/L by entry regime")
+            by_regime = trades.groupby("Entry regime").agg(
+                Trades=("P/L","count"), Gross_PnL=("P/L","sum"), Avg_PnL=("P/L","mean"),
+                Win_rate=("P/L", lambda s: 100*(s>0).mean())
+            ).reset_index()
+            st.dataframe(by_regime.round(2), use_container_width=True)
+
+            st.markdown("### 7. Exit reasons")
+            by_reason = trades.groupby("Reason").agg(
+                Trades=("P/L","count"), Gross_PnL=("P/L","sum"), Avg_PnL=("P/L","mean"),
+                Win_rate=("P/L", lambda s: 100*(s>0).mean())
+            ).reset_index()
+            st.dataframe(by_reason.round(2), use_container_width=True)
+
+            st.markdown("### 8. Largest losses")
+            cols = [c for c in ["Ticker","Entry date","Exit date","Strategy","Entry regime","P/L","Reason","Shares"] if c in trades.columns]
+            st.dataframe(trades.sort_values("P/L").head(15)[cols].round(2), use_container_width=True)
+
+        st.markdown("### 9. Bear-regime protection check")
+        st.success("V8 already uses a cash/defensive rule during Bear trend: it does not open new positions while the regime is Bear. Therefore V8.1 does not pretend that a separate 'bear skip' test is a new feature; the useful question is whether exits, entries in Range/Bull, costs, or position sizing are driving the losses.")
+
+# ---------------- PAPER TRADER ----------------
+
+with tabs[3]:
+    st.subheader("🤖 V8.1 paper trader")
     st.write("Paper only. No broker connection. The same fixed regime rules are used to produce watch/entry/exit information.")
     if st.button("🔎 Run V8 paper scan", type="primary"):
         rows=[]
@@ -439,7 +549,7 @@ with tabs[2]:
             st.info("A paper-buy candidate is a rules-based signal, not a promise of profit. Review the research and risk settings before treating it as a learning exercise.")
 
 # ---------------- RESEARCH ----------------
-with tabs[3]:
+with tabs[4]:
     st.subheader("📊 Current research dashboard")
     for ticker in tickers:
         d=add_indicators(load_history(ticker,"2y"))
@@ -457,7 +567,7 @@ with tabs[3]:
             st.write(f"Rule output: **{strategy}** — {'entry candidate' if signal else 'cash/defensive'}")
 
 # ---------------- PORTFOLIO ----------------
-with tabs[4]:
+with tabs[5]:
     st.subheader("💼 Paper portfolio")
     st.info("The V8 portfolio tab is a simulation dashboard. It does not persist trades between browser sessions and does not connect to a broker.")
     if st.session_state.v8_portfolio:
@@ -469,8 +579,8 @@ with tabs[4]:
         st.write("Run the V8 portfolio backtest first.")
 
 # ---------------- LEARN ----------------
-with tabs[5]:
-    st.subheader("📚 What V8 is teaching you")
+with tabs[6]:
+    st.subheader("📚 What V8.1 is teaching you")
     st.markdown("""
 ### 1. Regime first
 V8 classifies each asset using fixed price, moving-average and momentum conditions:
@@ -500,4 +610,4 @@ It does not promise profit, automatically optimise parameters to the past, or pl
 """)
 
 st.divider()
-st.caption("AI Investor V8 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V8.1 • Educational research and paper trading only • No broker connection • No guaranteed returns")
