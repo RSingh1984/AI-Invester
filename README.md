@@ -1,7 +1,14 @@
-# AI Investor V9.5
+# AI Investor V9.6
 
-Educational stock-market research and paper-trading laboratory.
+V9.6 is an educational stock-market research and paper-trading laboratory.
 
-V9.5 adds a fixed price-action confirmation layer (20-day breakout or pullback recovery), removes the V9.4 volume and 6-month momentum entry requirements, keeps risk controls, and uses chronological walk-forward testing.
+## V9.6 changes
+- Keeps V9.5 as a fixed control.
+- Variable 0–7 entry score across trend, momentum, volatility and price action.
+- Default stop widened from 2.0 ATR (control) to 2.5 ATR.
+- Keeps 3R target.
+- Adds a fixed portfolio drawdown brake: default 10% peak-to-trough, pausing new entries for 20 trading days.
+- Existing positions continue to use their normal stop/target/trend-break/max-hold rules.
+- Walk-forward robustness remains chronological and fixed-rule.
 
-No broker connection. No guaranteed returns. Historical backtests are not forecasts.
+This project is paper-only and does not guarantee returns or connect to a broker.
