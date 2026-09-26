@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9.3", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.4", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
@@ -305,6 +305,7 @@ def run_v9(
                         "Brokerage total": 2 * brokerage,
                         "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
                         "Hold days": held,
+                        "entry_checks": p.get("entry_checks", {}),
                     })
                     del positions[t]
                     last_exit_idx[t] = i + 1
@@ -426,6 +427,7 @@ def run_v9(
             "Brokerage total": 2 * brokerage,
             "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
             "Hold days": held,
+            "entry_checks": p.get("entry_checks", {}),
         })
 
     if not curve_points:
@@ -463,7 +465,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9.3 Settings")
+st.sidebar.header("⚙️ V9.4 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -486,7 +488,7 @@ if "v93_data" not in st.session_state:
 if "v93_diag" not in st.session_state:
     st.session_state.v93_diag = None
 
-st.title("📈 AI Investor V9.3")
+st.title("📈 AI Investor V9.4")
 st.caption("Confirmed-entry + lower-turnover + risk-controlled paper-trading research laboratory")
 st.info(
     "V9 is an educational research and paper-trading system. It does not guarantee returns, "
@@ -508,7 +510,7 @@ with tabs[0]:
         "total exposure. Signals are calculated on one day's close and executed at the next day's open."
     )
 
-    if st.button("🚀 Run V9.3 portfolio backtest", type="primary"):
+    if st.button("🚀 Run V9.4 portfolio backtest", type="primary"):
         data_map = build_data(tickers, years)
         st.session_state.v93_data = data_map
         st.session_state.v93_result = run_v9(
@@ -620,13 +622,13 @@ with tabs[1]:
 
 # ---------------- DIAGNOSTICS ----------------
 with tabs[2]:
-    st.subheader("🧪 V9.3 diagnostic laboratory")
+    st.subheader("🧪 V9.4 diagnostic laboratory")
     st.write(
         "The diagnostics test whether V9 actually reduced turnover and whether its losses, if any, "
         "are concentrated in particular stocks, entry scores, or exit reasons."
     )
 
-    if st.button("🧪 Run V9.3 diagnostics", type="primary"):
+    if st.button("🧪 Run V9.4 diagnostics", type="primary"):
         data_map = st.session_state.v93_data or build_data(tickers, years)
         st.session_state.v93_data = data_map
         base = run_v9(
@@ -762,7 +764,7 @@ with tabs[2]:
 
 # ---------------- PAPER TRADER ----------------
 with tabs[3]:
-    st.subheader("🤖 V9.3 paper trader")
+    st.subheader("🤖 V9.4 paper trader")
     st.write(
         "Paper-only scanner. It uses the same fixed entry confirmation rules as the backtest. "
         "It does not place real trades."
@@ -881,11 +883,11 @@ Position size is determined by the amount of account equity at risk and the dist
 Training, Validation and Out-of-sample slices are tested chronologically with the same fixed rules. No historical slice automatically changes the rules.
 
 ### 8. Entry-quality diagnostics
-V9.3 records which fixed confirmations were present on each trade so we can study whether the current entry logic is behaving consistently. The diagnostics do not automatically select a historical winner.
+V9.4 records which fixed confirmations were present on each trade so we can study whether the current entry logic is behaving consistently. The diagnostics do not automatically select a historical winner.
 
 ### 9. Important limitation
 Backtests are historical simulations. They cannot establish future returns, and real execution can differ because of spreads, liquidity, taxes, corporate actions, gaps and other market effects.
 """)
 
 st.divider()
-st.caption("AI Investor V9.3 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V9.4 • Educational research and paper trading only • No broker connection • No guaranteed returns")
