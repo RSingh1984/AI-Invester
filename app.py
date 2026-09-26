@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9.6", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.7", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
-# V9.6 is deliberately a fixed research system, not an optimizer.
+# V9.7 is deliberately a fixed research system, not an optimizer.
 # It targets the V8.1 diagnostic findings: too much turnover, weak entries,
 # and frequent regime exits. Entries use current-bar information and execute
 # at the next trading day's open. Exits are stop/target, or a fixed max hold.
@@ -67,7 +67,7 @@ def add_indicators(df):
     x["ATR14"] = tr.rolling(14).mean()
     x["ATR_PCT"] = x["ATR14"] / c * 100
 
-    # V9.6 price-action confirmation: a fresh breakout or a pullback recovery.
+    # V9.7 price-action confirmation: a fresh breakout or a pullback recovery.
     # These are calculated from information available at the signal close only.
     x["PREV_CLOSE"] = c.shift(1)
     x["PREV_SMA20"] = x["SMA20"].shift(1)
@@ -80,8 +80,14 @@ def add_indicators(df):
     )
     x["PRICE_CONFIRMATION"] = x["BREAKOUT20"] | x["PULLBACK_RECOVERY"]
 
+    # V9.7 trigger-strength features. These are descriptive measurements,
+    # not historical-performance optimizers.
+    x["SMA50_SLOPE20"] = x["SMA50"].pct_change(20) * 100
+    x["CLOSE_LOCATION"] = (c - l) / (h - l).replace(0, np.nan)
+    x["BREAKOUT_EXTENSION"] = (c / x["PRIOR_20D_HIGH"] - 1) * 100
+
     return x.replace([np.inf, -np.inf], np.nan).dropna(
-        subset=["SMA20", "SMA50", "SMA200", "RSI", "MOM20", "MOM63", "MOM126", "VOL20", "ATR14", "ATR_PCT", "PREV_CLOSE", "PREV_SMA20", "PRIOR_20D_HIGH"]
+        subset=["SMA20", "SMA50", "SMA200", "RSI", "MOM20", "MOM63", "MOM126", "VOL20", "ATR14", "ATR_PCT", "PREV_CLOSE", "PREV_SMA20", "PRIOR_20D_HIGH", "SMA50_SLOPE20", "CLOSE_LOCATION", "BREAKOUT_EXTENSION"]
     )
 
 
@@ -98,7 +104,7 @@ def classify_regime(row):
 
 
 def price_confirmation(row):
-    """Return the fixed V9.6 price-action trigger and its setup type."""
+    """Return the fixed V9.7 price-action trigger and its setup type."""
     breakout = bool(row.get("BREAKOUT20", False))
     recovery = bool(row.get("PULLBACK_RECOVERY", False))
     if breakout and recovery:
@@ -111,7 +117,7 @@ def price_confirmation(row):
 
 
 def entry_score(row):
-    """Fixed V9.6 entry-quality score; it describes current setup strength only."""
+    """Fixed V9.7 entry-quality score; it describes current setup strength only."""
     regime = classify_regime(row)
     if regime != "Bull trend":
         return 0, ["Not bull regime"]
@@ -131,7 +137,7 @@ def entry_score(row):
 
 
 def entry_checks(row):
-    """Return fixed V9.6 entry components for descriptive diagnostics."""
+    """Return fixed V9.7 entry components for descriptive diagnostics."""
     regime = classify_regime(row)
     confirmed, setup = price_confirmation(row)
     return {
@@ -160,53 +166,101 @@ def is_entry_candidate(row, min_score=4):
     )
 
 
-def v96_entry_components(row):
-    """V9.6 variable score: trend (2), momentum (2), volatility (1), price action (2)."""
-    trend = int(float(row["Close"]) > float(row["SMA50"])) + int(float(row["SMA50"]) > float(row["SMA200"]))
-    momentum = int(float(row["MOM20"]) > 0) + int(float(row["MOM63"]) > 0)
-    volatility = int(float(row["ATR_PCT"]) <= 6)
-    price = int(bool(row.get("BREAKOUT20", False))) + int(bool(row.get("PULLBACK_RECOVERY", False)))
-    total = trend + momentum + volatility + price
+def v97_setup(row):
+    breakout = bool(row.get("BREAKOUT20", False))
+    recovery = bool(row.get("PULLBACK_RECOVERY", False))
+    if breakout and recovery:
+        return "Breakout + pullback recovery"
+    if breakout:
+        return "20-day breakout"
+    if recovery:
+        return "Pullback recovery"
+    return "No setup"
+
+
+def v97_entry_components(row):
+    """V9.7 genuinely variable 0-10 trigger score.
+
+    Regime is a gate, not a score. Setup is a gate, while trigger quality is
+    measured independently across trend, momentum, volatility and price action.
+    """
+    close = float(row["Close"])
+    sma50 = float(row["SMA50"])
+    sma200 = float(row["SMA200"])
+    slope50 = float(row["SMA50_SLOPE20"])
+    mom20 = float(row["MOM20"])
+    mom63 = float(row["MOM63"])
+    atr_pct = float(row["ATR_PCT"])
+
+    trend = int(sma50 > sma200) + int(slope50 > 0)
+    momentum = int(mom20 > 1.0) + int(mom63 > 5.0)
+    volatility = 2 if atr_pct <= 5.0 else (1 if atr_pct <= 7.0 else 0)
+
+    setup = v97_setup(row)
+    loc = float(row["CLOSE_LOCATION"])
+    volume_ratio = float(row["VOL_RATIO"]) if pd.notna(row.get("VOL_RATIO", np.nan)) else np.nan
+
+    if setup in ("20-day breakout", "Breakout + pullback recovery"):
+        extension = float(row["BREAKOUT_EXTENSION"])
+        volume_ok = pd.notna(volume_ratio) and volume_ratio >= 1.10
+        price_action = (
+            int(extension >= 0.5) +
+            int(volume_ok) +
+            int(loc >= 0.65) +
+            int(0.0 <= extension <= 3.0)
+        )
+    elif setup == "Pullback recovery":
+        prev_close = float(row["PREV_CLOSE"])
+        reclaim = (close / float(row["SMA20"]) - 1) * 100
+        day_gain = (close / prev_close - 1) * 100
+        price_action = (
+            int(reclaim >= 0.25) +
+            int(day_gain >= 0.5) +
+            int(loc >= 0.60) +
+            int(mom20 > 0)
+        )
+    else:
+        price_action = 0
+
+    total = trend + momentum + volatility + price_action
     return {
-        "Trend": trend,
-        "Momentum": momentum,
-        "Volatility": volatility,
-        "Price action": price,
-        "Total": total,
+        "Trend score (0-2)": trend,
+        "Momentum score (0-2)": momentum,
+        "Volatility score (0-2)": volatility,
+        "Price-action score (0-4)": price_action,
+        "Total score (0-10)": total,
     }
 
 
-def v96_entry_score(row):
-    parts = v96_entry_components(row)
-    return int(parts["Total"]), parts
+def v97_entry_score(row):
+    parts = v97_entry_components(row)
+    return int(parts["Total score (0-10)"]), parts
 
 
-def v96_is_entry_candidate(row, min_score=5):
-    score, parts = v96_entry_score(row)
-    confirmed, _ = price_confirmation(row)
+def v97_is_entry_candidate(row, min_score=6):
+    score, _ = v97_entry_score(row)
     return (
         classify_regime(row) == "Bull trend"
+        and v97_setup(row) != "No setup"
         and score >= min_score
-        and confirmed
-        and float(row["ATR_PCT"]) <= 6
     )
 
 
-def v96_entry_checks(row):
-    score, parts = v96_entry_score(row)
-    confirmed, setup = price_confirmation(row)
+def v97_entry_checks(row):
+    score, parts = v97_entry_score(row)
+    setup = v97_setup(row)
     return {
-        "Trend score (0-2)": parts["Trend"],
-        "Momentum score (0-2)": parts["Momentum"],
-        "Volatility score (0-1)": parts["Volatility"],
-        "Price-action score (0-2)": parts["Price action"],
-        "Total score (0-7)": score,
+        **parts,
         "Bull regime": classify_regime(row) == "Bull trend",
-        "RSI 50-70": 50 <= float(row["RSI"]) <= 70,
-        "Fresh price confirmation": confirmed,
-        "20-day breakout": bool(row.get("BREAKOUT20", False)),
-        "Pullback recovery": bool(row.get("PULLBACK_RECOVERY", False)),
-        "ATR <= 6%": float(row["ATR_PCT"]) <= 6,
+        "Setup present": setup != "No setup",
+        "Setup": setup,
+        "SMA50 slope > 0": float(row["SMA50_SLOPE20"]) > 0,
+        "MOM20 > 1%": float(row["MOM20"]) > 1,
+        "MOM63 > 5%": float(row["MOM63"]) > 5,
+        "ATR <= 7%": float(row["ATR_PCT"]) <= 7,
+        "Close location": float(row["CLOSE_LOCATION"]),
+        "Breakout extension %": float(row["BREAKOUT_EXTENSION"]),
+        "Volume ratio": float(row["VOL_RATIO"]) if pd.notna(row.get("VOL_RATIO", np.nan)) else np.nan,
     }
 
 def metrics_from_curve(curve, trades, initial=10000):
@@ -535,7 +589,7 @@ def run_v95_control(
 
 
 
-def run_v96(
+def run_v97(
     data_map,
     initial=10000,
     risk_pct=0.75,
@@ -553,7 +607,7 @@ def run_v96(
     eval_start=None,
     eval_end=None,
 ):
-    """V9.6 fixed rules: variable entry score, wider stop and portfolio drawdown brake."""
+    """V9.7 setup/trigger architecture with V9.5 control and V9.7 risk-brake structure."""
     prepared = {t: add_indicators(df) for t, df in data_map.items() if not df.empty}
     prepared = {t: d for t, d in prepared.items() if len(d) >= 260}
     if not prepared:
@@ -655,11 +709,11 @@ def run_v96(
                     continue
                 row = safe_row(d, dt)
                 nxt = safe_row(d, next_dt)
-                if row is None or nxt is None or not v96_is_entry_candidate(row):
+                if row is None or nxt is None or not v97_is_entry_candidate(row):
                     continue
-                score, parts = v96_entry_score(row)
+                score, parts = v97_entry_score(row)
                 confirmed, setup = price_confirmation(row)
-                strength = (score, parts["Price action"], parts["Momentum"], -float(row["ATR_PCT"]), float(row["MOM20"]))
+                strength = (score, parts["Price-action score (0-4)"], parts["Momentum score (0-2)"], parts["Trend score (0-2)"], -float(row["ATR_PCT"]), float(row["MOM20"]))
                 candidates.append((strength, t, row, nxt, score, parts))
             candidates.sort(reverse=True, key=lambda x: x[0])
             for _, t, row, nxt, score, parts in candidates[:slots]:
@@ -691,7 +745,7 @@ def run_v96(
                     "shares": qty, "entry_price": px, "entry_value": value, "entry_date": next_dt,
                     "entry_index": i + 1, "stop": stop, "target": px + target_r * risk_per_share,
                     "score": score, "entry_regime": classify_regime(row),
-                    "entry_checks": v96_entry_checks(row), "setup": price_confirmation(row)[1], "last_price": px,
+                    "entry_checks": v97_entry_checks(row), "setup": v97_setup(row), "last_price": px,
                 }
 
         for t, p in positions.items():
@@ -754,7 +808,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9.6 Settings")
+st.sidebar.header("⚙️ V9.7 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -764,30 +818,30 @@ risk_pct = st.sidebar.slider("Risk per trade (% equity)", 0.25, 2.0, 0.75, 0.25)
 max_pos_pct = st.sidebar.slider("Max position (% equity)", 5, 50, 25, 5)
 max_exposure_pct = st.sidebar.slider("Max invested exposure (%)", 25, 100, 60, 5)
 max_positions = st.sidebar.slider("Max simultaneous positions", 1, 4, 3, 1)
-stop_atr = st.sidebar.slider("V9.6 stop distance (ATR)", 1.5, 4.0, 2.5, 0.25)
+stop_atr = st.sidebar.slider("V9.7 stop distance (ATR)", 1.5, 4.0, 2.5, 0.25)
 target_r = st.sidebar.slider("Profit target (R)", 1.0, 5.0, 3.0, 0.5)
 cooldown_days = st.sidebar.slider("Cooldown after exit (days)", 0, 30, 10, 1)
 max_hold_days = st.sidebar.slider("Maximum hold (days)", 30, 180, 90, 10)
 drawdown_brake_pct = st.sidebar.slider("Portfolio drawdown brake (%)", 5.0, 20.0, 10.0, 1.0)
 brake_days = st.sidebar.slider("Brake duration (trading days)", 5, 60, 20, 5)
 
-if "v96_data" not in st.session_state:
-    st.session_state.v96_data = {}
+if "v97_data" not in st.session_state:
+    st.session_state.v97_data = {}
 if "v95_control" not in st.session_state:
     st.session_state.v95_control = None
-if "v96_result" not in st.session_state:
-    st.session_state.v96_result = None
-if "v96_diag" not in st.session_state:
-    st.session_state.v96_diag = None
-if "v96_robust" not in st.session_state:
-    st.session_state.v96_robust = None
-if "v96_scan" not in st.session_state:
-    st.session_state.v96_scan = pd.DataFrame()
+if "v97_result" not in st.session_state:
+    st.session_state.v97_result = None
+if "v97_diag" not in st.session_state:
+    st.session_state.v97_diag = None
+if "v97_robust" not in st.session_state:
+    st.session_state.v97_robust = None
+if "v97_scan" not in st.session_state:
+    st.session_state.v97_scan = pd.DataFrame()
 
-st.title("📈 AI Investor V9.6")
-st.caption("Variable-score entries + wider volatility stop + portfolio risk brake + paper-trading research laboratory")
+st.title("📈 AI Investor V9.7")
+st.caption("Setup-specific triggers + genuine 0–10 entry quality + wider stop + portfolio risk brake + paper-trading research laboratory")
 st.info(
-    "V9.6 is an educational research and paper-trading system. It does not guarantee returns, "
+    "V9.7 is an educational research and paper-trading system. It does not guarantee returns, "
     "does not predict the future, and has no broker connection. V9.5 remains the fixed control version."
 )
 
@@ -798,22 +852,22 @@ tabs = st.tabs([
 
 # ---------------- PORTFOLIO LAB ----------------
 with tabs[0]:
-    st.subheader("V9.6 portfolio engine — V9.5 control included")
+    st.subheader("V9.7 portfolio engine — V9.5 control included")
     st.write(
-        "V9.6 keeps the V9.5 entry framework as the control while changing three things only: "
-        "the entry score becomes variable (0–7), the default stop widens to 2.5 ATR, and a "
+        "V9.5 remains the unchanged control. V9.7 changes the entry architecture while keeping the V9.6 risk-management experiment: "
+        "the entry architecture separates regime/setup gates from a variable 0–10 trigger score, keeps a 2.5 ATR experimental stop, and a "
         "portfolio drawdown brake pauses new entries after a defined drawdown. Existing positions keep their exits."
     )
-    if st.button("🚀 Run V9.5 control + V9.6 backtests", type="primary"):
+    if st.button("🚀 Run V9.5 control + V9.7 backtests", type="primary"):
         data_map = build_data(tickers, years)
-        st.session_state.v96_data = data_map
+        st.session_state.v97_data = data_map
         st.session_state.v95_control = run_v95_control(
             data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
             max_exposure_pct=max_exposure_pct, stop_atr=2.0, target_r=target_r,
             brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions,
             min_hold_days=5, cooldown_days=cooldown_days, max_hold_days=max_hold_days,
         )
-        st.session_state.v96_result = run_v96(
+        st.session_state.v97_result = run_v97(
             data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
             max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
             brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions,
@@ -822,33 +876,33 @@ with tabs[0]:
         )
 
     ctrl = st.session_state.v95_control
-    r = st.session_state.v96_result
+    r = st.session_state.v97_result
     if ctrl and r:
-        st.markdown("### Control vs V9.6")
+        st.markdown("### Control vs V9.7")
         comp = pd.DataFrame([
             {"Version":"V9.5 control", "Final $":ctrl["Final $"], "Return %":ctrl["Return %"], "CAGR %":ctrl["CAGR %"], "Max DD %":ctrl["Max DD %"], "Trades":ctrl["Trades"], "Win rate %":ctrl["Win rate %"], "Profit factor":ctrl["Profit factor"]},
-            {"Version":"V9.6", "Final $":r["Final $"], "Return %":r["Return %"], "CAGR %":r["CAGR %"], "Max DD %":r["Max DD %"], "Trades":r["Trades"], "Win rate %":r["Win rate %"], "Profit factor":r["Profit factor"]},
+            {"Version":"V9.7", "Final $":r["Final $"], "Return %":r["Return %"], "CAGR %":r["CAGR %"], "Max DD %":r["Max DD %"], "Trades":r["Trades"], "Win rate %":r["Win rate %"], "Profit factor":r["Profit factor"]},
         ])
         st.dataframe(comp.round(2), use_container_width=True)
-        st.caption(f"V9.6 risk-brake events: {r.get('brake events', 0)}; each event pauses new entries for {r.get('brake days', brake_days)} trading days. This is risk management, not a return forecast.")
+        st.caption(f"V9.7 risk-brake events: {r.get('brake events', 0)}; each event pauses new entries for {r.get('brake days', brake_days)} trading days. This is risk management, not a return forecast.")
 
         c = st.columns(5)
-        c[0].metric("V9.6 Final", f"${r['Final $']:,.2f}")
-        c[1].metric("V9.6 Return", f"{r['Return %']:+.2f}%")
-        c[2].metric("V9.6 Max DD", f"{r['Max DD %']:.2f}%")
-        c[3].metric("V9.6 Trades", f"{r['Trades']}")
-        c[4].metric("V9.6 Profit factor", fmt_pf(r["Profit factor"]))
-        st.subheader("V9.6 equity curve")
+        c[0].metric("V9.7 Final", f"${r['Final $']:,.2f}")
+        c[1].metric("V9.7 Return", f"{r['Return %']:+.2f}%")
+        c[2].metric("V9.7 Max DD", f"{r['Max DD %']:.2f}%")
+        c[3].metric("V9.7 Trades", f"{r['Trades']}")
+        c[4].metric("V9.7 Profit factor", fmt_pf(r["Profit factor"]))
+        st.subheader("V9.7 equity curve")
         st.line_chart(r["curve"])
-        st.subheader("V9.6 trade log")
+        st.subheader("V9.7 trade log")
         if not r["trades_df"].empty:
             st.dataframe(r["trades_df"].round(2), use_container_width=True)
 
 # ---------------- ROBUSTNESS ----------------
 with tabs[1]:
-    st.subheader("🔬 V9.6 walk-forward robustness")
-    st.write("Training, Validation and Out-of-sample periods are chronological. The same fixed V9.6 rules are used in every slice; no slice is used to tune parameters.")
-    if st.button("🔬 Run V9.6 robustness test", type="primary"):
+    st.subheader("🔬 V9.7 walk-forward robustness")
+    st.write("Training, Validation and Out-of-sample periods are chronological. The same fixed V9.7 rules are used in every slice; no slice is used to tune parameters.")
+    if st.button("🔬 Run V9.7 robustness test", type="primary"):
         rows = []
         for ticker in tickers:
             raw = load_history(ticker, f"{years + 2}y")
@@ -857,7 +911,7 @@ with tabs[1]:
             n=len(raw); a=int(n*0.55); b=int(n*0.775)
             parts=[("Training",raw.index[0],raw.index[a-1]),("Validation",raw.index[a],raw.index[b-1]),("Out-of-sample",raw.index[b],raw.index[-1])]
             for name, ps, pe in parts:
-                res=run_v96({ticker:raw}, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
+                res=run_v97({ticker:raw}, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct,
                     max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r,
                     brokerage=brokerage, slippage_pct=slippage, max_positions=1,
                     cooldown_days=cooldown_days, max_hold_days=max_hold_days,
@@ -865,8 +919,8 @@ with tabs[1]:
                     eval_start=ps, eval_end=pe)
                 if res:
                     rows.append({"Ticker":ticker,"Period":name,"CAGR %":res["CAGR %"],"Max DD %":res["Max DD %"],"Trades":res["Trades"],"Win rate %":res["Win rate %"],"Profit factor":res["Profit factor"],"Brake events":res.get("brake events",0)})
-        st.session_state.v96_robust=pd.DataFrame(rows)
-    rr=st.session_state.v96_robust
+        st.session_state.v97_robust=pd.DataFrame(rows)
+    rr=st.session_state.v97_robust
     if rr is not None and not rr.empty:
         st.dataframe(rr.round(2), use_container_width=True)
         oos=rr[rr["Period"]=="Out-of-sample"]
@@ -877,22 +931,22 @@ with tabs[1]:
 
 # ---------------- DIAGNOSTICS ----------------
 with tabs[2]:
-    st.subheader("🧪 V9.6 diagnostic laboratory")
-    st.write("Diagnostics compare V9.5 control with V9.6 and show whether the new rules change turnover, stop losses, entry quality and drawdown behaviour.")
-    if st.button("🧪 Run V9.6 diagnostics", type="primary"):
-        data_map=st.session_state.v96_data or build_data(tickers, years)
-        st.session_state.v96_data=data_map
+    st.subheader("🧪 V9.7 diagnostic laboratory")
+    st.write("Diagnostics compare V9.5 control with V9.7 and show whether the new rules change turnover, stop losses, entry quality and drawdown behaviour.")
+    if st.button("🧪 Run V9.7 diagnostics", type="primary"):
+        data_map=st.session_state.v97_data or build_data(tickers, years)
+        st.session_state.v97_data=data_map
         ctrl=run_v95_control(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct, max_exposure_pct=max_exposure_pct, stop_atr=2.0, target_r=target_r, brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions, min_hold_days=5, cooldown_days=cooldown_days, max_hold_days=max_hold_days)
-        base=run_v96(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct, max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r, brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions, cooldown_days=cooldown_days, max_hold_days=max_hold_days, drawdown_brake_pct=drawdown_brake_pct, brake_days=brake_days)
-        zero=run_v96(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct, max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r, brokerage=0, slippage_pct=0, max_positions=max_positions, cooldown_days=cooldown_days, max_hold_days=max_hold_days, drawdown_brake_pct=drawdown_brake_pct, brake_days=brake_days)
-        st.session_state.v96_diag=(ctrl,base,zero)
-    diag=st.session_state.v96_diag
+        base=run_v97(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct, max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r, brokerage=brokerage, slippage_pct=slippage, max_positions=max_positions, cooldown_days=cooldown_days, max_hold_days=max_hold_days, drawdown_brake_pct=drawdown_brake_pct, brake_days=brake_days)
+        zero=run_v97(data_map, initial=10000, risk_pct=risk_pct, max_pos_pct=max_pos_pct, max_exposure_pct=max_exposure_pct, stop_atr=stop_atr, target_r=target_r, brokerage=0, slippage_pct=0, max_positions=max_positions, cooldown_days=cooldown_days, max_hold_days=max_hold_days, drawdown_brake_pct=drawdown_brake_pct, brake_days=brake_days)
+        st.session_state.v97_diag=(ctrl,base,zero)
+    diag=st.session_state.v97_diag
     if diag:
         ctrl,base,zero=diag
         comparison=pd.DataFrame([
             {"Test":"V9.5 control","Final $":ctrl["Final $"],"Return %":ctrl["Return %"],"CAGR %":ctrl["CAGR %"],"Max DD %":ctrl["Max DD %"],"Trades":ctrl["Trades"],"Profit factor":ctrl["Profit factor"]},
-            {"Test":"V9.6 current costs","Final $":base["Final $"],"Return %":base["Return %"],"CAGR %":base["CAGR %"],"Max DD %":base["Max DD %"],"Trades":base["Trades"],"Profit factor":base["Profit factor"]},
-            {"Test":"V9.6 zero brokerage + zero slippage","Final $":zero["Final $"],"Return %":zero["Return %"],"CAGR %":zero["CAGR %"],"Max DD %":zero["Max DD %"],"Trades":zero["Trades"],"Profit factor":zero["Profit factor"]},
+            {"Test":"V9.7 current costs","Final $":base["Final $"],"Return %":base["Return %"],"CAGR %":base["CAGR %"],"Max DD %":base["Max DD %"],"Trades":base["Trades"],"Profit factor":base["Profit factor"]},
+            {"Test":"V9.7 zero brokerage + zero slippage","Final $":zero["Final $"],"Return %":zero["Return %"],"CAGR %":zero["CAGR %"],"Max DD %":zero["Max DD %"],"Trades":zero["Trades"],"Profit factor":zero["Profit factor"]},
         ])
         st.dataframe(comparison.round(2), use_container_width=True)
         trades=base["trades_df"].copy()
@@ -928,66 +982,66 @@ with tabs[2]:
 
 # ---------------- PAPER TRADER ----------------
 with tabs[3]:
-    st.subheader("🤖 V9.6 paper trader")
-    st.write("Paper-only scanner. It uses the V9.6 fixed variable score and risk rules. It does not place real trades.")
-    if st.button("🔎 Run V9.6 paper scan", type="primary"):
+    st.subheader("🤖 V9.7 paper trader")
+    st.write("Paper-only scanner. It uses the V9.7 fixed variable score and risk rules. It does not place real trades.")
+    if st.button("🔎 Run V9.7 paper scan", type="primary"):
         rows=[]
         for ticker in tickers:
             d=add_indicators(load_history(ticker,"2y"))
             if d.empty: continue
-            r=d.iloc[-1]; score,parts=v96_entry_score(r); candidate=v96_is_entry_candidate(r); regime=classify_regime(r); confirmed,setup=price_confirmation(r)
+            r=d.iloc[-1]; score,parts=v97_entry_score(r); candidate=v97_is_entry_candidate(r); regime=classify_regime(r); setup=v97_setup(r)
             stop=float(r["Close"]-stop_atr*r["ATR14"]); target=float(r["Close"]+target_r*(r["Close"]-stop))
-            rows.append({"Ticker":ticker,"Price":float(r["Close"]),"Regime":regime,"Score":f"{score}/7","Trend":parts["Trend"],"Momentum":parts["Momentum"],"Volatility":parts["Volatility"],"Price action":parts["Price action"],"Setup":setup,"Action":"PAPER BUY CANDIDATE" if candidate else "WAIT / CASH","RSI":float(r["RSI"]),"3M %":float(r["MOM63"]),"ATR %":float(r["ATR_PCT"]),"Stop":stop if candidate else np.nan,"Target":target if candidate else np.nan})
-        st.session_state.v96_scan=pd.DataFrame(rows)
-    scan=st.session_state.v96_scan
+            rows.append({"Ticker":ticker,"Price":float(r["Close"]),"Regime":regime,"Score":f"{score}/10","Trend":parts["Trend score (0-2)"],"Momentum":parts["Momentum score (0-2)"],"Volatility":parts["Volatility score (0-2)"],"Price action":parts["Price-action score (0-4)"],"Setup":setup,"Action":"PAPER BUY CANDIDATE" if candidate else "WAIT / CASH","RSI":float(r["RSI"]),"3M %":float(r["MOM63"]),"ATR %":float(r["ATR_PCT"]),"Stop":stop if candidate else np.nan,"Target":target if candidate else np.nan})
+        st.session_state.v97_scan=pd.DataFrame(rows)
+    scan=st.session_state.v97_scan
     if not scan.empty:
         st.dataframe(scan.round(2),use_container_width=True)
         st.info("A candidate is a rules-based paper signal, not a recommendation or guarantee.")
 
 # ---------------- RESEARCH ----------------
 with tabs[4]:
-    st.subheader("📊 Current V9.6 research dashboard")
+    st.subheader("📊 Current V9.7 research dashboard")
     for ticker in tickers:
         d=add_indicators(load_history(ticker,"2y"))
         if d.empty: continue
-        r=d.iloc[-1]; score,parts=v96_entry_score(r); candidate=v96_is_entry_candidate(r); regime=classify_regime(r); _,setup=price_confirmation(r)
+        r=d.iloc[-1]; score,parts=v97_entry_score(r); candidate=v97_is_entry_candidate(r); regime=classify_regime(r); setup=v97_setup(r)
         with st.expander(f"{ticker} — ${float(r['Close']):.2f} — {regime}"):
             c=st.columns(6)
-            c[0].metric("Regime",regime); c[1].metric("Entry score",f"{score}/7"); c[2].metric("Setup",setup); c[3].metric("Trend",f"{parts['Trend']}/2"); c[4].metric("Momentum",f"{parts['Momentum']}/2"); c[5].metric("Price action",f"{parts['Price action']}/2")
+            c[0].metric("Regime",regime); c[1].metric("Entry score",f"{score}/10"); c[2].metric("Setup",setup); c[3].metric("Trend",f"{parts['Trend score (0-2)']}/2"); c[4].metric("Momentum",f"{parts['Momentum score (0-2)']}/2"); c[5].metric("Price action",f"{parts['Price-action score (0-4)']}/4")
             st.write(f"SMA20 ${r['SMA20']:.2f} | SMA50 ${r['SMA50']:.2f} | SMA200 ${r['SMA200']:.2f} | RSI {r['RSI']:.1f} | ATR% {r['ATR_PCT']:.2f}%")
             st.write(f"Rule output: **{'PAPER BUY CANDIDATE' if candidate else 'WAIT / CASH'}**")
 
 # ---------------- PORTFOLIO ----------------
 with tabs[5]:
     st.subheader("💼 Paper portfolio")
-    st.info("V9.6 is paper-only and does not connect to a broker. Use the backtest and paper scanner to study the rules before considering any real-money use.")
-    r=st.session_state.v96_result
+    st.info("V9.7 is paper-only and does not connect to a broker. Use the backtest and paper scanner to study the rules before considering any real-money use.")
+    r=st.session_state.v97_result
     if r:
-        st.metric("Latest V9.6 simulated portfolio value",f"${r['Final $']:,.2f}")
+        st.metric("Latest V9.7 simulated portfolio value",f"${r['Final $']:,.2f}")
         if not r["trades_df"].empty: st.dataframe(r["trades_df"].round(2),use_container_width=True)
     else: st.write("Run the portfolio backtest first.")
 
 # ---------------- LEARN ----------------
 with tabs[6]:
-    st.subheader("📚 What V9.6 is teaching you")
+    st.subheader("📚 What V9.7 is teaching you")
     st.markdown("""
 ### 1. V9.5 is the control
 V9.5 remains unchanged in the comparison. This prevents us from moving the goalposts every time we test a new idea.
 
-### 2. Variable entry score
-V9.6 scores four independent dimensions: **trend (0–2), momentum (0–2), volatility (0–1), and price action (0–2)** for a total of 0–7. Accepted entries require a bull trend, fresh price confirmation, acceptable volatility and a minimum score of 5.
+### 2. Setup/trigger architecture
+V9.7 separates **regime and setup gates** from a genuinely variable **0–10 trigger score**: trend (0–2), momentum (0–2), volatility (0–2), and price action (0–4). A candidate requires a Bull trend, a defined breakout/pullback setup, and a fixed minimum score of 6. The threshold is a design rule, not selected from the backtest results.
 
 ### 3. Wider volatility stop
-The V9.5 control uses 2 ATR. V9.6 uses a default **2.5 ATR** stop while keeping the target at **3R**. The purpose is to test whether some stop-outs were ordinary price noise rather than a true setup failure.
+The V9.5 control uses 2 ATR. V9.7 uses a default **2.5 ATR** stop while keeping the target at **3R**. The purpose is to test whether some stop-outs were ordinary price noise rather than a true setup failure.
 
 ### 4. Portfolio drawdown brake
-When portfolio equity crosses a fixed 10% drawdown from its peak, V9.6 pauses **new entries for 20 trading days**. Existing positions continue to follow their stops, targets and exits. The brake is a risk-control mechanism, not a market prediction.
+When portfolio equity crosses a fixed 10% drawdown from its peak, V9.7 pauses **new entries for 20 trading days**. Existing positions continue to follow their stops, targets and exits. The brake is a risk-control mechanism, not a market prediction.
 
 ### 5. Walk-forward testing
-Training, Validation and Out-of-sample slices are tested chronologically with the same fixed V9.6 rules. We should not select a version merely because it looks better on the historical training period.
+Training, Validation and Out-of-sample slices are tested chronologically with the same fixed V9.7 rules. We should not select a version merely because it looks better on the historical training period.
 
 ### 6. Paper only
 This system has no broker connection and does not guarantee future returns. A good historical result would still need extended paper trading and further validation before any consideration of real capital.
 """)
 st.divider()
-st.caption("AI Investor V9.6 • Educational research and paper trading only • V9.5 control preserved • No guaranteed returns")
+st.caption("AI Investor V9.7 • Educational research and paper trading only • V9.5 control preserved • No guaranteed returns")
