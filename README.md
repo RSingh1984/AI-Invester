@@ -1,3 +1,3 @@
-# AI Investor V11
+# AI Investor V12
 
-Educational paper-trading research app. V11 tests a fixed entry-quality model against the V10 control using the same 3 ATR stop. No broker connection and no guaranteed returns.
+Educational stock-market research and paper-trading app. V12 tests breakout-pullback-recovery entries against an unchanged V11 control. No broker connection and no guaranteed returns.
