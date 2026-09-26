@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9.2", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.3", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
-# V9 is deliberately a fixed research system, not an optimizer.
+# V9.3 is deliberately a fixed research system, not an optimizer.
 # It targets the V8.1 diagnostic findings: too much turnover, weak entries,
 # and frequent regime exits. Entries use current-bar information and execute
 # at the next trading day's open. Exits are stop/target, or a fixed max hold.
@@ -104,6 +104,24 @@ def entry_score(row):
     score = sum(1 for _, ok in checks if ok)
     failed = [name for name, ok in checks if not ok]
     return score, failed
+
+
+def entry_checks(row):
+    """Return the fixed confirmation components for diagnostic attribution."""
+    regime = classify_regime(row)
+    checks = {
+        "Bull regime": regime == "Bull trend",
+        "Price > SMA50": float(row["Close"]) > float(row["SMA50"]),
+        "SMA50 > SMA200": float(row["SMA50"]) > float(row["SMA200"]),
+        "3M momentum > 0": float(row["MOM63"]) > 0,
+        "6M momentum > 0": float(row["MOM126"]) > 0,
+        "RSI 50–70": 50 <= float(row["RSI"]) <= 70,
+        "1M momentum > 0": float(row["MOM20"]) > 0,
+        "Volatility <= 6%": float(row["ATR_PCT"]) <= 6,
+    }
+    if pd.notna(row.get("VOL_RATIO", np.nan)):
+        checks["Volume >= 0.8x avg"] = float(row["VOL_RATIO"]) >= 0.8
+    return checks
 
 
 def is_entry_candidate(row, min_score=6):
@@ -368,6 +386,7 @@ def run_v9(
                     "target": px + target_r * risk_per_share,
                     "score": score,
                     "entry_regime": classify_regime(row),
+                    "entry_checks": entry_checks(row),
                     "last_price": px,
                 }
 
@@ -384,13 +403,13 @@ def run_v9(
         if len(eligible) == 0:
             continue
         last_dt = eligible[-1]
-        px = float(d["Close"].iloc[-1])
+        px = float(d.loc[last_dt, "Close"])
         gross = p["shares"] * px
         sell_cost = brokerage + gross * slippage_pct / 100
         buy_cost = brokerage + p["entry_value"] * slippage_pct / 100
         cash += gross - sell_cost
         pnl = (gross - sell_cost) - (p["entry_value"] + buy_cost)
-        held = max(1, len(d.loc[p["entry_date"]:]) - 1)
+        held = max(1, len(d.loc[p["entry_date"]:last_dt]) - 1)
 
         trades.append({
             "Ticker": t,
@@ -444,7 +463,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9.2 Settings")
+st.sidebar.header("⚙️ V9.3 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -460,14 +479,14 @@ min_hold_days = st.sidebar.slider("Minimum hold (days)", 1, 20, 5, 1)
 cooldown_days = st.sidebar.slider("Cooldown after exit (days)", 0, 30, 10, 1)
 max_hold_days = st.sidebar.slider("Maximum hold (days)", 30, 180, 90, 10)
 
-if "v9_result" not in st.session_state:
-    st.session_state.v9_result = None
-if "v9_data" not in st.session_state:
-    st.session_state.v9_data = {}
-if "v9_diag" not in st.session_state:
-    st.session_state.v9_diag = None
+if "v93_result" not in st.session_state:
+    st.session_state.v93_result = None
+if "v93_data" not in st.session_state:
+    st.session_state.v93_data = {}
+if "v93_diag" not in st.session_state:
+    st.session_state.v93_diag = None
 
-st.title("📈 AI Investor V9.2")
+st.title("📈 AI Investor V9.3")
 st.caption("Confirmed-entry + lower-turnover + risk-controlled paper-trading research laboratory")
 st.info(
     "V9 is an educational research and paper-trading system. It does not guarantee returns, "
@@ -482,17 +501,17 @@ tabs = st.tabs([
 
 # ---------------- PORTFOLIO LAB ----------------
 with tabs[0]:
-    st.subheader("V9.2 confirmed-entry portfolio engine")
+    st.subheader("V9.3 entry-quality portfolio engine")
     st.write(
         "V9 addresses the V8.1 diagnostic findings by requiring several current-market confirmations, "
         "removing routine regime exits, adding a minimum hold, adding a post-exit cooldown, and limiting "
         "total exposure. Signals are calculated on one day's close and executed at the next day's open."
     )
 
-    if st.button("🚀 Run V9.2 portfolio backtest", type="primary"):
+    if st.button("🚀 Run V9.3 portfolio backtest", type="primary"):
         data_map = build_data(tickers, years)
-        st.session_state.v9_data = data_map
-        st.session_state.v9_result = run_v9(
+        st.session_state.v93_data = data_map
+        st.session_state.v93_result = run_v9(
             data_map,
             initial=10000,
             risk_pct=risk_pct,
@@ -508,7 +527,7 @@ with tabs[0]:
             max_hold_days=max_hold_days,
         )
 
-    r = st.session_state.v9_result
+    r = st.session_state.v93_result
     if r:
         c = st.columns(5)
         c[0].metric("Final portfolio", f"${r['Final $']:,.2f}")
@@ -539,12 +558,12 @@ with tabs[0]:
 
 # ---------------- ROBUSTNESS ----------------
 with tabs[1]:
-    st.subheader("🔬 V9 walk-forward robustness")
+    st.subheader("🔬 V9.3 walk-forward robustness")
     st.write(
         "The historical data is split chronologically into Training, Validation and Out-of-sample slices. "
         "The same fixed V9 rules are used in every slice; no slice is used to tune parameters."
     )
-    if st.button("🔬 Run V9 robustness test", type="primary"):
+    if st.button("🔬 Run V9.3 robustness test", type="primary"):
         rows = []
         for ticker in tickers:
             raw = load_history(ticker, f"{years + 2}y")
@@ -566,7 +585,7 @@ with tabs[1]:
                     initial=10000,
                     risk_pct=risk_pct,
                     max_pos_pct=max_pos_pct,
-                    max_exposure_pct=100,
+                    max_exposure_pct=max_exposure_pct,
                     stop_atr=stop_atr,
                     target_r=target_r,
                     brokerage=brokerage,
@@ -588,9 +607,9 @@ with tabs[1]:
                         "Win rate %": res["Win rate %"],
                         "Profit factor": res["Profit factor"],
                     })
-        st.session_state.v9_robust = pd.DataFrame(rows)
+        st.session_state.v93_robust = pd.DataFrame(rows)
 
-    rr = st.session_state.get("v9_robust", pd.DataFrame())
+    rr = st.session_state.get("v93_robust", pd.DataFrame())
     if not rr.empty:
         st.dataframe(rr.round(2), use_container_width=True)
         oos = rr[rr["Period"] == "Out-of-sample"]
@@ -601,15 +620,15 @@ with tabs[1]:
 
 # ---------------- DIAGNOSTICS ----------------
 with tabs[2]:
-    st.subheader("🧪 V9 diagnostic laboratory")
+    st.subheader("🧪 V9.3 diagnostic laboratory")
     st.write(
         "The diagnostics test whether V9 actually reduced turnover and whether its losses, if any, "
         "are concentrated in particular stocks, entry scores, or exit reasons."
     )
 
-    if st.button("🧪 Run V9 diagnostics", type="primary"):
-        data_map = st.session_state.v9_data or build_data(tickers, years)
-        st.session_state.v9_data = data_map
+    if st.button("🧪 Run V9.3 diagnostics", type="primary"):
+        data_map = st.session_state.v93_data or build_data(tickers, years)
+        st.session_state.v93_data = data_map
         base = run_v9(
             data_map,
             initial=10000,
@@ -640,9 +659,9 @@ with tabs[2]:
             cooldown_days=cooldown_days,
             max_hold_days=max_hold_days,
         )
-        st.session_state.v9_diag = (base, zero_cost)
+        st.session_state.v93_diag = (base, zero_cost)
 
-    diag = st.session_state.v9_diag
+    diag = st.session_state.v93_diag
     if diag:
         base, zero = diag
         st.markdown("### 1. V9 baseline")
@@ -721,9 +740,29 @@ with tabs[2]:
                 use_container_width=True,
             )
 
+
+        st.markdown("### 8. Entry-quality component diagnostics")
+        st.caption("This section describes the fixed entry confirmations actually present on each historical trade. It does not optimize or choose a winner.")
+        component_rows = []
+        for _, tr in trades.iterrows():
+            checks = tr.get("entry_checks", {})
+            if isinstance(checks, dict):
+                for name, passed in checks.items():
+                    component_rows.append({"Component": name, "Passed": bool(passed), "P/L": float(tr["P/L"])})
+        if component_rows:
+            cf = pd.DataFrame(component_rows)
+            summary = cf.groupby(["Component", "Passed"]).agg(
+                Trades=("P/L", "count"),
+                Gross_PnL=("P/L", "sum"),
+                Avg_PnL=("P/L", "mean"),
+                Win_rate=("P/L", lambda s: 100 * (s > 0).mean()),
+            ).reset_index()
+            st.dataframe(summary.round(2), use_container_width=True)
+            st.info("Component results are descriptive only. They are not used to automatically tune the strategy.")
+
 # ---------------- PAPER TRADER ----------------
 with tabs[3]:
-    st.subheader("🤖 V9 paper trader")
+    st.subheader("🤖 V9.3 paper trader")
     st.write(
         "Paper-only scanner. It uses the same fixed entry confirmation rules as the backtest. "
         "It does not place real trades."
@@ -754,9 +793,9 @@ with tabs[3]:
                 "Target": target if candidate else np.nan,
                 "Why not": ", ".join(failed[:4]) if not candidate else "",
             })
-        st.session_state.v9_scan = pd.DataFrame(rows)
+        st.session_state.v93_scan = pd.DataFrame(rows)
 
-    scan = st.session_state.get("v9_scan", pd.DataFrame())
+    scan = st.session_state.get("v93_scan", pd.DataFrame())
     if not scan.empty:
         st.dataframe(scan.round(2), use_container_width=True)
         st.info("A candidate is only a rules-based paper signal. It is not a guarantee or a recommendation.")
@@ -798,7 +837,7 @@ with tabs[5]:
         "V9 is paper-only and does not persist trades as a broker account. "
         "Use the Trade log to study entries, exits, costs and risk."
     )
-    r = st.session_state.v9_result
+    r = st.session_state.v93_result
     if r:
         st.metric("Latest simulated portfolio value", f"${r['Final $']:,.2f}")
         if not r["trades_df"].empty:
@@ -841,9 +880,12 @@ Position size is determined by the amount of account equity at risk and the dist
 ### 7. Walk-forward testing
 Training, Validation and Out-of-sample slices are tested chronologically with the same fixed rules. No historical slice automatically changes the rules.
 
-### 8. Important limitation
+### 8. Entry-quality diagnostics
+V9.3 records which fixed confirmations were present on each trade so we can study whether the current entry logic is behaving consistently. The diagnostics do not automatically select a historical winner.
+
+### 9. Important limitation
 Backtests are historical simulations. They cannot establish future returns, and real execution can differ because of spreads, liquidity, taxes, corporate actions, gaps and other market effects.
 """)
 
 st.divider()
-st.caption("AI Investor V9.2 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V9.3 • Educational research and paper trading only • No broker connection • No guaranteed returns")
