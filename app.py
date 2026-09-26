@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-st.set_page_config(page_title="AI Investor V9.4", page_icon="📈", layout="wide")
+st.set_page_config(page_title="AI Investor V9.5", page_icon="📈", layout="wide")
 
 WATCHLIST_DEFAULT = "BHP.AX,CBA.AX,CSL.AX,VAS.AX"
 
-# V9.3 is deliberately a fixed research system, not an optimizer.
+# V9.5 is deliberately a fixed research system, not an optimizer.
 # It targets the V8.1 diagnostic findings: too much turnover, weak entries,
 # and frequent regime exits. Entries use current-bar information and execute
 # at the next trading day's open. Exits are stop/target, or a fixed max hold.
@@ -67,8 +67,21 @@ def add_indicators(df):
     x["ATR14"] = tr.rolling(14).mean()
     x["ATR_PCT"] = x["ATR14"] / c * 100
 
+    # V9.5 price-action confirmation: a fresh breakout or a pullback recovery.
+    # These are calculated from information available at the signal close only.
+    x["PREV_CLOSE"] = c.shift(1)
+    x["PREV_SMA20"] = x["SMA20"].shift(1)
+    x["PRIOR_20D_HIGH"] = h.rolling(20).max().shift(1)
+    x["BREAKOUT20"] = c > x["PRIOR_20D_HIGH"]
+    x["PULLBACK_RECOVERY"] = (
+        (x["PREV_CLOSE"] <= x["PREV_SMA20"])
+        & (c > x["SMA20"])
+        & (c > x["PREV_CLOSE"])
+    )
+    x["PRICE_CONFIRMATION"] = x["BREAKOUT20"] | x["PULLBACK_RECOVERY"]
+
     return x.replace([np.inf, -np.inf], np.nan).dropna(
-        subset=["SMA20", "SMA50", "SMA200", "RSI", "MOM20", "MOM63", "MOM126", "VOL20", "ATR14", "ATR_PCT"]
+        subset=["SMA20", "SMA50", "SMA200", "RSI", "MOM20", "MOM63", "MOM126", "VOL20", "ATR14", "ATR_PCT", "PREV_CLOSE", "PREV_SMA20", "PRIOR_20D_HIGH"]
     )
 
 
@@ -84,53 +97,67 @@ def classify_regime(row):
     return "Range / transition"
 
 
+def price_confirmation(row):
+    """Return the fixed V9.5 price-action trigger and its setup type."""
+    breakout = bool(row.get("BREAKOUT20", False))
+    recovery = bool(row.get("PULLBACK_RECOVERY", False))
+    if breakout and recovery:
+        return True, "Breakout + pullback recovery"
+    if breakout:
+        return True, "20-day breakout"
+    if recovery:
+        return True, "Pullback recovery"
+    return False, "No fresh price confirmation"
+
+
 def entry_score(row):
-    """Fixed, transparent confirmation score. No historical optimization."""
+    """Fixed V9.5 entry-quality score; it describes current setup strength only."""
     regime = classify_regime(row)
     if regime != "Bull trend":
         return 0, ["Not bull regime"]
 
-    checks = []
-    checks.append(("Price > SMA50", float(row["Close"]) > float(row["SMA50"])))
-    checks.append(("SMA50 > SMA200", float(row["SMA50"]) > float(row["SMA200"])))
-    checks.append(("3M momentum > 0", float(row["MOM63"]) > 0))
-    checks.append(("6M momentum > 0", float(row["MOM126"]) > 0))
-    checks.append(("RSI 50–70", 50 <= float(row["RSI"]) <= 70))
-    checks.append(("1M momentum > 0", float(row["MOM20"]) > 0))
-    checks.append(("Volatility <= 6%", float(row["ATR_PCT"]) <= 6))
-    if pd.notna(row.get("VOL_RATIO", np.nan)):
-        checks.append(("Volume >= 0.8x avg", float(row["VOL_RATIO"]) >= 0.8))
-
+    checks = [
+        ("RSI 50–70", 50 <= float(row["RSI"]) <= 70),
+        ("1M momentum > 0", float(row["MOM20"]) > 0),
+        ("Volatility <= 6%", float(row["ATR_PCT"]) <= 6),
+    ]
+    confirmed, setup = price_confirmation(row)
+    checks.append(("Fresh price confirmation", confirmed))
     score = sum(1 for _, ok in checks if ok)
     failed = [name for name, ok in checks if not ok]
+    if confirmed:
+        failed = [x for x in failed if x != "Fresh price confirmation"]
     return score, failed
 
 
 def entry_checks(row):
-    """Return the fixed confirmation components for diagnostic attribution."""
+    """Return fixed V9.5 entry components for descriptive diagnostics."""
     regime = classify_regime(row)
-    checks = {
+    confirmed, setup = price_confirmation(row)
+    return {
         "Bull regime": regime == "Bull trend",
         "Price > SMA50": float(row["Close"]) > float(row["SMA50"]),
         "SMA50 > SMA200": float(row["SMA50"]) > float(row["SMA200"]),
         "3M momentum > 0": float(row["MOM63"]) > 0,
-        "6M momentum > 0": float(row["MOM126"]) > 0,
         "RSI 50–70": 50 <= float(row["RSI"]) <= 70,
         "1M momentum > 0": float(row["MOM20"]) > 0,
         "Volatility <= 6%": float(row["ATR_PCT"]) <= 6,
+        "Fresh price confirmation": confirmed,
+        "20-day breakout": bool(row.get("BREAKOUT20", False)),
+        "Pullback recovery": bool(row.get("PULLBACK_RECOVERY", False)),
     }
-    if pd.notna(row.get("VOL_RATIO", np.nan)):
-        checks["Volume >= 0.8x avg"] = float(row["VOL_RATIO"]) >= 0.8
-    return checks
 
 
-def is_entry_candidate(row, min_score=6):
+def is_entry_candidate(row, min_score=4):
     score, _ = entry_score(row)
-    # If volume is unavailable, the score is out of 7 instead of 8.
-    available_checks = 8 if pd.notna(row.get("VOL_RATIO", np.nan)) else 7
-    threshold = min_score if available_checks == 8 else min(5, available_checks)
-    return classify_regime(row) == "Bull trend" and score >= threshold
-
+    return (
+        classify_regime(row) == "Bull trend"
+        and score >= min_score
+        and price_confirmation(row)[0]
+        and 50 <= float(row["RSI"]) <= 70
+        and float(row["MOM20"]) > 0
+        and float(row["ATR_PCT"]) <= 6
+    )
 
 def metrics_from_curve(curve, trades, initial=10000):
     curve = pd.Series(curve).dropna()
@@ -306,6 +333,7 @@ def run_v9(
                         "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
                         "Hold days": held,
                         "entry_checks": p.get("entry_checks", {}),
+                        "setup": p.get("setup", ""),
                     })
                     del positions[t]
                     last_exit_idx[t] = i + 1
@@ -331,11 +359,14 @@ def run_v9(
                     continue
 
                 score, failed = entry_score(row)
-                # Rank only by current signal strength, not by historical outcome.
+                # Rank only by current setup quality, not by historical outcome.
+                confirmed, setup = price_confirmation(row)
+                setup_priority = 1 if setup in ("20-day breakout", "Breakout + pullback recovery") else 0
                 strength = (
                     score,
+                    setup_priority,
+                    float(row["MOM20"]),
                     float(row["MOM63"]),
-                    float(row["MOM126"]),
                     -float(row["ATR_PCT"]),
                 )
                 candidates.append((strength, t, row, nxt, score))
@@ -388,6 +419,7 @@ def run_v9(
                     "score": score,
                     "entry_regime": classify_regime(row),
                     "entry_checks": entry_checks(row),
+                    "setup": price_confirmation(row)[1],
                     "last_price": px,
                 }
 
@@ -428,6 +460,7 @@ def run_v9(
             "Slippage total": p["entry_value"] * slippage_pct / 100 + gross * slippage_pct / 100,
             "Hold days": held,
             "entry_checks": p.get("entry_checks", {}),
+            "setup": p.get("setup", ""),
         })
 
     if not curve_points:
@@ -465,7 +498,7 @@ def fmt_pf(x):
 
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ V9.4 Settings")
+st.sidebar.header("⚙️ V9.5 Settings")
 watch_text = st.sidebar.text_input("Watchlist", WATCHLIST_DEFAULT)
 tickers = [x.strip().upper() for x in watch_text.split(",") if x.strip()]
 years = st.sidebar.selectbox("Test period", [5, 7, 10], index=0)
@@ -488,7 +521,7 @@ if "v93_data" not in st.session_state:
 if "v93_diag" not in st.session_state:
     st.session_state.v93_diag = None
 
-st.title("📈 AI Investor V9.4")
+st.title("📈 AI Investor V9.5")
 st.caption("Confirmed-entry + lower-turnover + risk-controlled paper-trading research laboratory")
 st.info(
     "V9 is an educational research and paper-trading system. It does not guarantee returns, "
@@ -503,14 +536,14 @@ tabs = st.tabs([
 
 # ---------------- PORTFOLIO LAB ----------------
 with tabs[0]:
-    st.subheader("V9.3 entry-quality portfolio engine")
+    st.subheader("V9.5 entry-quality portfolio engine")
     st.write(
         "V9 addresses the V8.1 diagnostic findings by requiring several current-market confirmations, "
         "removing routine regime exits, adding a minimum hold, adding a post-exit cooldown, and limiting "
         "total exposure. Signals are calculated on one day's close and executed at the next day's open."
     )
 
-    if st.button("🚀 Run V9.4 portfolio backtest", type="primary"):
+    if st.button("🚀 Run V9.5 portfolio backtest", type="primary"):
         data_map = build_data(tickers, years)
         st.session_state.v93_data = data_map
         st.session_state.v93_result = run_v9(
@@ -560,12 +593,12 @@ with tabs[0]:
 
 # ---------------- ROBUSTNESS ----------------
 with tabs[1]:
-    st.subheader("🔬 V9.3 walk-forward robustness")
+    st.subheader("🔬 V9.5 walk-forward robustness")
     st.write(
         "The historical data is split chronologically into Training, Validation and Out-of-sample slices. "
-        "The same fixed V9 rules are used in every slice; no slice is used to tune parameters."
+        "The same fixed V9.5 rules are used in every slice; no slice is used to tune parameters."
     )
-    if st.button("🔬 Run V9.3 robustness test", type="primary"):
+    if st.button("🔬 Run V9.5 robustness test", type="primary"):
         rows = []
         for ticker in tickers:
             raw = load_history(ticker, f"{years + 2}y")
@@ -622,13 +655,13 @@ with tabs[1]:
 
 # ---------------- DIAGNOSTICS ----------------
 with tabs[2]:
-    st.subheader("🧪 V9.4 diagnostic laboratory")
+    st.subheader("🧪 V9.5 diagnostic laboratory")
     st.write(
-        "The diagnostics test whether V9 actually reduced turnover and whether its losses, if any, "
+        "The diagnostics test whether V9.5 actually improved entry timing and whether its losses, if any, "
         "are concentrated in particular stocks, entry scores, or exit reasons."
     )
 
-    if st.button("🧪 Run V9.4 diagnostics", type="primary"):
+    if st.button("🧪 Run V9.5 diagnostics", type="primary"):
         data_map = st.session_state.v93_data or build_data(tickers, years)
         st.session_state.v93_data = data_map
         base = run_v9(
@@ -717,7 +750,17 @@ with tabs[2]:
             ).reset_index()
             st.dataframe(by_score.round(2), use_container_width=True)
 
-            st.markdown("### 5. Exit reasons")
+            st.markdown("### 5. P/L by price setup")
+            if "setup" in trades.columns:
+                by_setup = trades.groupby("setup").agg(
+                    Trades=("P/L", "count"),
+                    Gross_PnL=("P/L", "sum"),
+                    Avg_PnL=("P/L", "mean"),
+                    Win_rate=("P/L", lambda s: 100 * (s > 0).mean()),
+                ).reset_index()
+                st.dataframe(by_setup.round(2), use_container_width=True)
+
+            st.markdown("### 6. Exit reasons")
             by_reason = trades.groupby("Reason").agg(
                 Trades=("P/L", "count"),
                 Gross_PnL=("P/L", "sum"),
@@ -726,7 +769,7 @@ with tabs[2]:
             ).reset_index()
             st.dataframe(by_reason.round(2), use_container_width=True)
 
-            st.markdown("### 6. Largest losses")
+            st.markdown("### 7. Largest losses")
             cols = [
                 "Ticker", "Entry date", "Exit date", "Entry", "Exit",
                 "Shares", "P/L", "Reason", "Entry score", "Hold days"
@@ -736,14 +779,14 @@ with tabs[2]:
                 use_container_width=True,
             )
 
-            st.markdown("### 7. Largest winners")
+            st.markdown("### 8. Largest winners")
             st.dataframe(
                 trades.sort_values("P/L", ascending=False).head(15)[cols].round(2),
                 use_container_width=True,
             )
 
 
-        st.markdown("### 8. Entry-quality component diagnostics")
+        st.markdown("### 9. Entry-quality component diagnostics")
         st.caption("This section describes the fixed entry confirmations actually present on each historical trade. It does not optimize or choose a winner.")
         component_rows = []
         for _, tr in trades.iterrows():
@@ -764,9 +807,9 @@ with tabs[2]:
 
 # ---------------- PAPER TRADER ----------------
 with tabs[3]:
-    st.subheader("🤖 V9.4 paper trader")
+    st.subheader("🤖 V9.5 paper trader")
     st.write(
-        "Paper-only scanner. It uses the same fixed entry confirmation rules as the backtest. "
+        "Paper-only scanner. It uses the same fixed V9.5 price-confirmation rules as the backtest. "
         "It does not place real trades."
     )
     if st.button("🔎 Run V9 paper scan", type="primary"):
@@ -779,13 +822,15 @@ with tabs[3]:
             score, failed = entry_score(r)
             regime = classify_regime(r)
             candidate = is_entry_candidate(r)
+            confirmed, setup = price_confirmation(r)
             stop = float(r["Close"] - stop_atr * r["ATR14"])
             target = float(r["Close"] + target_r * (r["Close"] - stop))
             rows.append({
                 "Ticker": ticker,
                 "Price": float(r["Close"]),
                 "Regime": regime,
-                "Score": score,
+                "Score": f"{score}/4",
+                "Setup": setup,
                 "Action": "PAPER BUY CANDIDATE" if candidate else "WAIT / CASH",
                 "RSI": float(r["RSI"]),
                 "3M %": float(r["MOM63"]),
@@ -816,8 +861,9 @@ with tabs[4]:
         with st.expander(f"{ticker} — ${float(r['Close']):.2f} — {regime}"):
             c = st.columns(6)
             c[0].metric("Regime", regime)
-            c[1].metric("Entry score", f"{score}/8")
-            c[2].metric("1M momentum", f"{r['MOM20']:+.1f}%")
+            confirmed, setup = price_confirmation(r)
+            c[1].metric("Entry score", f"{score}/4")
+            c[2].metric("Price setup", setup)
             c[3].metric("3M momentum", f"{r['MOM63']:+.1f}%")
             c[4].metric("6M momentum", f"{r['MOM126']:+.1f}%")
             c[5].metric("RSI", f"{r['RSI']:.1f}")
@@ -855,17 +901,18 @@ with tabs[6]:
 The system can remain in cash when the evidence is weak. Fewer trades can be useful when transaction costs are meaningful.
 
 ### 2. Entry confirmation
-A candidate must be in a Bull trend and satisfy several fixed confirmations:
+V9.5 keeps the long-term trend filters but adds a fresh price-action trigger. A candidate must be in a Bull trend and satisfy:
 - price above SMA50
 - SMA50 above SMA200
 - positive 3-month momentum
-- positive 6-month momentum
 - RSI between 50 and 70
 - positive 1-month momentum
 - ATR volatility no higher than 6%
-- volume at least 0.8× its 20-day average when volume is available
+- a fresh price confirmation: either a 20-trading-day breakout or a pullback recovery back above SMA20
 
-The score is a transparent current-market rule. It is not trained to pick a historical winner.
+The entry score is 0–4 for the four current setup checks (RSI, 1M momentum, volatility and fresh price confirmation). The long-term trend conditions remain mandatory.
+
+V9.5 deliberately removes the volume requirement and 6-month momentum requirement from the entry trigger because V9.4 diagnostics did not show those checks separating winners from losers. This is a fixed rule change, not an automatic historical optimizer.
 
 ### 3. No routine regime exit
 V8.1 showed that frequent regime exits added substantial turnover. V9 therefore does not automatically sell merely because the regime label changes.
@@ -883,11 +930,11 @@ Position size is determined by the amount of account equity at risk and the dist
 Training, Validation and Out-of-sample slices are tested chronologically with the same fixed rules. No historical slice automatically changes the rules.
 
 ### 8. Entry-quality diagnostics
-V9.4 records which fixed confirmations were present on each trade so we can study whether the current entry logic is behaving consistently. The diagnostics do not automatically select a historical winner.
+V9.5 records which fixed confirmations were present on each trade so we can study whether the current entry logic is behaving consistently. The diagnostics do not automatically select a historical winner.
 
 ### 9. Important limitation
 Backtests are historical simulations. They cannot establish future returns, and real execution can differ because of spreads, liquidity, taxes, corporate actions, gaps and other market effects.
 """)
 
 st.divider()
-st.caption("AI Investor V9.4 • Educational research and paper trading only • No broker connection • No guaranteed returns")
+st.caption("AI Investor V9.5 • Educational research and paper trading only • No broker connection • No guaranteed returns")
