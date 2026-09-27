@@ -1676,7 +1676,7 @@ def run_v12(data_map, initial=10000, risk_pct=0.75, max_pos_pct=25, max_exposure
     final_dt=max(d.index[-1] for d in prepared.values()) if eval_end is None else (max(final_curve_dates) if final_curve_dates else None)
     if final_dt is not None: curve_points.append((final_dt,cash))
     curve=pd.Series({pd.Timestamp(k):v for k,v in curve_points}).sort_index(); curve=curve[~curve.index.duplicated(keep="last")]; curve=curve.reindex(pd.date_range(curve.index.min(),curve.index.max(),freq="B")).ffill()
-    m=metrics_from_curve(curve,trades,initial); m["curve"]=curve; m["trades_df"]=pd.DataFrame(trades); m["avg exposure %"]=float(np.mean([v for _,v in exposure_points])) if exposure_points else 0; m["brake events"]=brake_events; m["brake days"]=brake_days
+    m=metrics_from_curve(curve,trades,initial); m["curve"]=curve; m["trades_df"]=pd.DataFrame(trades); m["avg exposure %"]=float(np.mean(exposure_points)) if exposure_points else 0; m["brake events"]=brake_events; m["brake days"]=brake_days
     return m
 
 
