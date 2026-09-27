@@ -1,3 +1,3 @@
-# AI Investor V12
+# AI Investor V13
 
-Educational stock-market research and paper-trading app. V12 tests breakout-pullback-recovery entries against an unchanged V11 control. No broker connection and no guaranteed returns.
+Educational stock-market research and paper-trading app. V13 tests anti-chase entry location and ASX 200 market context while preserving V11 as the control. No broker connection and no guaranteed returns.
